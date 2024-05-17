@@ -21,7 +21,9 @@ set(OUTPUT_EXE   "demo"  CACHE STRING "Executable to compile to")
 
 option(TESTING "Enable unit testing. This disables compiling USER_SOURCE" OFF)
 
-# Dependencies
+# -----------------------------------------------------------------------------
+# ----- DEPENDENCIES ----------------------------------------------------------
+# -----------------------------------------------------------------------------
 add_subdirectory(dependencies/optimize-cuda-memory-usage-v1)
 
 # -----------------------------------------------------------------------------
