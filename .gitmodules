@@ -1,0 +1,3 @@
+[submodule "dependencies/optimize-cuda-memory-usage-v1"]
+	path = dependencies/optimize-cuda-memory-usage-v1
+	url = https://github.com/OkamiWong/optimize-cuda-memory-usage-v1
