@@ -1,4 +1,8 @@
+# Dev
 .vscode/
-build*/
 **/.DS_Store
+
+# Artifacts
 Doxygen_doc/
+build*/
+*.log
