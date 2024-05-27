@@ -59,7 +59,7 @@ int main() {
   QuESTEnv env = createQuESTEnv();
 
   // choose the register size
-  int numQubits = 15;
+  int numQubits = 32;
 
   // randomly choose the secret parameter
   srand(time(NULL));
