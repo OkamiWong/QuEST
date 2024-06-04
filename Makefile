@@ -3,7 +3,7 @@ all: build
 .PHONY: config
 config:
 	cmake -S . -B ./build -DGPUACCELERATED=1 -DGPU_COMPUTE_CAPABILITY=80 -DUSE_CUQUANTUM=1 \
-	-DUSER_SOURCE=examples/bernstein_vazirani_circuit.c \
+	-DUSER_SOURCE=examples/qft.c \
 	-DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
 	-DCMAKE_PREFIX_PATH=${ORTOOLS_ROOT}
 
