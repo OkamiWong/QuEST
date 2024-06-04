@@ -2,7 +2,8 @@ all: build
 
 .PHONY: config
 config:
-	cmake -S . -B ./build -DGPUACCELERATED=1 -DGPU_COMPUTE_CAPABILITY=80 -DUSE_CUQUANTUM=0 \
+	cmake -S . -B ./build -DGPUACCELERATED=1 -DGPU_COMPUTE_CAPABILITY=80 \
+	-DUSE_CUQUANTUM=0 -DUSE_MEMOPT=1 \
 	-DUSER_SOURCE=examples/qft.c \
 	-DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
 	-DCMAKE_PREFIX_PATH=${ORTOOLS_ROOT}
