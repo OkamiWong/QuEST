@@ -39,7 +39,7 @@ set(GPU_ARCH gfx90 CACHE STRING "GPU hardware dependent, used for AMD GPUs when 
 
 option(USE_CUQUANTUM "Whether to use NVIDIA's cuQuantum library (requires prior installation) in lieu of QuEST's bespoke GPU kernel. Set to 1 to enable." 0)
 
-option(USE_MEMOPT "Whether to use memopt, only effective when GPUACCELERATED is 1. Set to 1 to enable" 0)
+option(USE_MEMOPT "Whether to use memopt. Require GPUACCELERATED is 1. Set to 1 to enable" 0)
 
 # *****************************************************************************
 # ***** NO CHANGES SHOULD BE REQUIRED FROM THE USER BEYOND THIS POINT *********
@@ -80,6 +80,10 @@ if ( (${PRECISION} EQUAL 4) AND
         ${GPUACCELERATED} )
     message(FATAL_ERROR "PRECISION=${PRECISION} but quad precision is not \
         supported on GPU. Aborting")
+endif()
+
+if (USE_MEMOPT AND NOT GPUACCELERATED)
+    message(FATAL_ERROR "USE_MEMOPT=1 requires GPUACCELERATED=1")
 endif()
 
 # ----- WARNINGS --------------------------------------------------------------

@@ -56,6 +56,12 @@ if (NOT TESTING)
     else ()
         target_link_libraries(${OUTPUT_EXE} QuEST m)
     endif()
+
+    if (USE_MEMOPT)
+        # Currently not all operations are implemented with memopt
+        # Ignore unresolved symbols to compile the executable with missing implementations
+        target_link_libraries(${OUTPUT_EXE} "-Wl,--warn-unresolved-symbols")
+    endif()
 endif()
 
 # -----------------------------------------------------------------------------
