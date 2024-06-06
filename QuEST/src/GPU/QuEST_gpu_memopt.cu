@@ -140,11 +140,11 @@ __forceinline__ __host__ __device__ StateVecIndex_t insertTwoZeroBits(const Stat
 }
 
 __forceinline__ __host__ __device__ StateVecIndex_t getGlobalIndex(Qureg* qureg, StateVecIndex_t index) {
-  return index >> (qureg->numQubitsInStateVec - qureg->numGlobalBits);
+  return index >> qureg->numLocalBits;
 }
 
 __forceinline__ __host__ __device__ StateVecIndex_t getLocalIndex(Qureg* qureg, StateVecIndex_t index) {
-  return index & ((1 << (qureg->numQubitsInStateVec - qureg->numGlobalBits)) - 1);
+  return index & ((1 << qureg->numLocalBits) - 1);
 }
 
 __forceinline__ __host__ __device__ void splitIndex(Qureg* qureg, StateVecIndex_t index, StateVecIndex_t* globalIndex, StateVecIndex_t* localIndex) {
@@ -198,8 +198,8 @@ __global__ void statevec_hadamardLocalBitKernel(Qureg qureg, StateVecIndex_t glo
   const StateVecIndex_t numTasks = qureg.numAmpsPerShard >> 1;
   if (idx >= numTasks) return;
 
-  StateVecIndex_t indexUp = ((idx >> targetQubit) << (targetQubit + 1)) + (idx % (1 << targetQubit));
-  StateVecIndex_t indexLo = indexUp + (1 << targetQubit);
+  StateVecIndex_t indexUp = insertZeroBit(idx, targetQubit);
+  StateVecIndex_t indexLo = flipBit(indexUp, targetQubit);
 
   qreal* stateVecReal = qureg.deviceStateVecShards[globalIndex].real;
   qreal* stateVecImag = qureg.deviceStateVecShards[globalIndex].imag;
@@ -211,10 +211,10 @@ __global__ void statevec_hadamardLocalBitKernel(Qureg qureg, StateVecIndex_t glo
   stateImagLo = &stateVecImag[indexLo];
 
   qreal stateRealUpValue, stateRealLoValue, stateImagUpValue, stateImagLoValue;
-  stateRealUpValue = *stateVecReal;
-  stateImagUpValue = *stateVecImag;
-  stateRealLoValue = *stateVecReal;
-  stateImagLoValue = *stateVecImag;
+  stateRealUpValue = *stateRealUp;
+  stateImagUpValue = *stateImagUp;
+  stateRealLoValue = *stateRealLo;
+  stateImagLoValue = *stateImagLo;
 
   qreal factor = 1.0 / sqrt(2.0);
 
