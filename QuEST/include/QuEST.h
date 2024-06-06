@@ -350,6 +350,8 @@ typedef struct SubDiagonalOp
     
 } SubDiagonalOp;
 
+#define MAX_NUM_SHARDS 64
+
 /** Represents a system of qubits.
  * Qubits are zero-based
  *
@@ -368,13 +370,21 @@ typedef struct Qureg
     //! Number of probability amplitudes held in stateVec by this process
     //! In the non-MPI version, this is the total number of amplitudes
     long long int numAmpsPerChunk;
+    //! Number of amplitudes per shard, only used for memopt
+    long long int numAmpsPerShard;
     //! Total number of amplitudes, which are possibly distributed among machines
     long long int numAmpsTotal;
     //! The position of the chunk of the state vector held by this process in the full state vector
     int chunkId;
     //! Number of chunks the state vector is broken up into -- the number of MPI processes used
     int numChunks;
-    
+    //! Number of shards the state vector is broken up into, only used for memopt
+    int numShards;
+    //! Number of global index bits of the state vector shard, only used for memopt
+    int numGlobalBits;
+    //! Number of local index bits of the state vector shard, only used for memopt
+    int numLocalBits;
+
     //! Computational state amplitudes - a subset thereof in the MPI version
     ComplexArray stateVec; 
     //! Temporary storage for a chunk of the state vector received from another process in the MPI version
@@ -389,6 +399,9 @@ typedef struct Qureg
     cuAmp* cuStateVec;
     cuAmp* deviceCuStateVec;
     CuQuantumConfig* cuConfig;
+
+    //! Storage for wavefunction amplitues in the GPU version with memopt
+    ComplexArray deviceStateVecShards[MAX_NUM_SHARDS];
 
     //! Storage for generated QASM output
     QASMLogger* qasmLog;
