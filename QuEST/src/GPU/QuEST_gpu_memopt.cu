@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "../../../dependencies/optimize-cuda-memory-usage-v1/public/memopt.hpp"
+
 #include "QuEST.h"
 #include "QuEST_gpu_common.h"
 #include "QuEST_internal.h"
@@ -65,6 +67,10 @@ void seedQuEST(QuESTEnv* env, unsigned long int* seedArray, int numSeeds) {
 }
 
 QuESTEnv createQuESTEnv() {
+  memopt::SystemWallClock clock;
+  clock.start();
+  clock.logWithCurrentTime("hello from memopt");
+
   validateGPUExists(GPUExists(), __func__);
 
   QuESTEnv env;

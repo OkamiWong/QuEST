@@ -16,3 +16,7 @@ build:
 .PHONY: build-sequential
 build-sequential:
 	cmake --build ./build
+
+.PHONY: update-memopt
+update-memopt:
+	git submodule update --remote dependencies/optimize-cuda-memory-usage-v1/

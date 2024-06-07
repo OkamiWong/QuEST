@@ -149,6 +149,9 @@ if (GPUACCELERATED)
   elseif (USE_CUQUANTUM)
     find_package(CUDA REQUIRED)
     ADD_DEFINITIONS( -DUSE_CUQUANTUM )
+  elseif (USE_MEMOPT)
+    find_package(CUDA REQUIRED)
+    find_package(CUDAToolkit REQUIRED)
   else()
     find_package(CUDA REQUIRED)
   endif()  
@@ -208,7 +211,9 @@ if (GPUACCELERATED)
     endif()
   else()
     set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
-        -arch=compute_${GPU_COMPUTE_CAPABILITY} -code=sm_${GPU_COMPUTE_CAPABILITY}"
+        -arch=compute_${GPU_COMPUTE_CAPABILITY} \
+        -code=sm_${GPU_COMPUTE_CAPABILITY} \
+        -std=c++17"
     )
     if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
         set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
@@ -293,7 +298,7 @@ endif()
 # set C++ flags that are common between compilers and build types
 if (USE_CUQUANTUM)
   set(CMAKE_CXX_STANDARD 14)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 else ()
   set (CMAKE_CXX_STANDARD 98)
 endif ()
@@ -438,6 +443,9 @@ elseif (USE_CUQUANTUM)
   target_include_directories(QuEST PUBLIC "/usr/local/cuda/include")
 else()
   target_link_libraries(QuEST ${CUDA_LIBRARIES})
+  if (USE_MEMOPT)
+    target_link_libraries(QuEST memopt)
+  endif()
 endif()
 
 # ----- Coverage testing with GCC or Clang ------------------------------------
