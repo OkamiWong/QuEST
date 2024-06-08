@@ -291,7 +291,7 @@ __forceinline__ __device__ void setMultiRegPhaseInds(
   StateVecIndex_t* phaseInds, StateVecIndex_t fullIndex,
   int* qubits, int* numQubitsPerReg, int numRegs, enum bitEncoding encoding
 ) {
-  size_t stride = qureg->numAmpsTotal;
+  size_t stride = qureg->numAmpsPerShard;
   size_t offset = fullIndex;
 
   if (encoding == UNSIGNED) {
@@ -321,7 +321,7 @@ __forceinline__ __device__ StateVecIndex_t getIndOfMultiRegPhaseOverride(
   StateVecIndex_t* phaseInds, int numRegs,
   StateVecIndex_t* overrideInds, int numOverrides
 ) {
-  size_t stride = qureg->numAmpsTotal;
+  size_t stride = qureg->numAmpsPerShard;
   size_t offset = fullIndex;
 
   int i;
@@ -446,7 +446,7 @@ __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
   StateVecIndex_t* phaseInds, int numRegs,
   enum phaseFunc phaseFuncName, qreal* params, int numParams
 ) {
-  size_t stride = qureg->numAmpsTotal;
+  size_t stride = qureg->numAmpsPerShard;
   size_t offset = fullIndex;
 
   if (
@@ -544,21 +544,17 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
   numThreadsPerBlock = 128;
   numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
-  // TODO: allocate for each task individually
-  // Allocate thread-local working space
-  StateVecIndex_t* d_phaseInds;
-  checkCudaErrors(cudaMallocAsync(&d_phaseInds, params.numRegs * qureg.numAmpsTotal * sizeof *d_phaseInds, stream));
-
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
+    StateVecIndex_t* d_phaseInds;
+    checkCudaErrors(cudaMallocAsync(&d_phaseInds, params.numRegs * qureg.numAmpsPerShard * sizeof *d_phaseInds, stream));
     statevec_applyParamNamedPhaseFuncOverridesKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
       qureg,
       params,
       d_phaseInds,
       i
     );
+    checkCudaErrors(cudaFreeAsync(d_phaseInds, stream));
   }
-
-  checkCudaErrors(cudaFreeAsync(d_phaseInds, stream));
 }
 
 __global__ void statevec_swapQubitAmpsBothLocalKernel(Qureg qureg, StateVecIndex_t globalIndex, int qb1, int qb2) {
@@ -650,26 +646,27 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
       );
     }
   } else {
-    // TODO: Allocate workspace for each task individually
     // Both are global bits
-    qreal *realTemp, *imagTemp;
-    checkCudaErrors(cudaMallocAsync(&realTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
-    checkCudaErrors(cudaMallocAsync(&imagTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 2); i++) {
+      qreal *realTemp, *imagTemp;
+      checkCudaErrors(cudaMallocAsync(&realTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
+      checkCudaErrors(cudaMallocAsync(&imagTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
+
       StateVecIndex_t globalIndex00 = insertTwoZeroBits(i, qb1 - qureg.numLocalBits, qb2 - qureg.numLocalBits);
       StateVecIndex_t globalIndex01 = flipBit(globalIndex00, qb1 - qureg.numLocalBits);
       StateVecIndex_t globalIndex10 = flipBit(globalIndex00, qb2 - qureg.numLocalBits);
+
       checkCudaErrors(cudaMemcpyAsync(realTemp, qureg.deviceStateVecShards[globalIndex01].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
       checkCudaErrors(cudaMemcpyAsync(imagTemp, qureg.deviceStateVecShards[globalIndex01].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
       checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex01].real, qureg.deviceStateVecShards[globalIndex10].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
       checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex01].imag, qureg.deviceStateVecShards[globalIndex10].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
       checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex10].real, realTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
       checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex10].imag, imagTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
-    }
 
-    checkCudaErrors(cudaFreeAsync(realTemp, stream));
-    checkCudaErrors(cudaFreeAsync(imagTemp, stream));
+      checkCudaErrors(cudaFreeAsync(realTemp, stream));
+      checkCudaErrors(cudaFreeAsync(imagTemp, stream));
+    }
   }
 }
 
