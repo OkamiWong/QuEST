@@ -26,98 +26,6 @@ typedef long long StateVecIndex_t;
 constexpr int MAX_NUM_QUBITS = 64;
 constexpr int MAX_NUM_PHASE_FUNC_OVERRIDES = 8;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#define NUM_GLOBAL_BITS 4
-
-// Copied from QuEST_gpu_common.cu
-int GPUExists(void) {
-  int deviceCount, device;
-  int gpuDeviceCount = 0;
-  struct cudaDeviceProp properties;
-  cudaError_t cudaResultCode = cudaGetDeviceCount(&deviceCount);
-  if (cudaResultCode != cudaSuccess) deviceCount = 0;
-  /* machines with no GPUs can still report one emulation device */
-  for (device = 0; device < deviceCount; ++device) {
-    cudaGetDeviceProperties(&properties, device);
-    if (properties.major != 9999) { /* 9999 means emulation only */
-      ++gpuDeviceCount;
-    }
-  }
-  if (gpuDeviceCount)
-    return 1;
-  else
-    return 0;
-}
-
-// Copied from QuEST_gpu_common.cu
-void seedQuEST(QuESTEnv* env, unsigned long int* seedArray, int numSeeds) {
-  // free existing seed array, if exists
-  if (env->seeds != NULL)
-    free(env->seeds);
-
-  // record keys in permanent heap
-  env->seeds = (unsigned long int*)malloc(numSeeds * sizeof *(env->seeds));
-  for (int i = 0; i < numSeeds; i++)
-    (env->seeds)[i] = seedArray[i];
-  env->numSeeds = numSeeds;
-
-  // pass keys to Mersenne Twister seeder
-  init_by_array(seedArray, numSeeds);
-}
-
-QuESTEnv createQuESTEnv() {
-  validateGPUExists(GPUExists(), __func__);
-
-  QuESTEnv env;
-  env.rank = 0;
-  env.numRanks = 1;
-
-  env.seeds = NULL;
-  env.numSeeds = 0;
-  seedQuESTDefault(&env);
-
-  return env;
-}
-
-void destroyQuESTEnv(QuESTEnv env) {
-  free(env.seeds);
-}
-
-void statevec_createQureg(Qureg* qureg, int numQubits, QuESTEnv env) {
-  assert((1 << NUM_GLOBAL_BITS) <= MAX_NUM_SHARDS);
-  assert(numQubits > NUM_GLOBAL_BITS);
-
-  const StateVecIndex_t numShards = 1L << NUM_GLOBAL_BITS;
-  const StateVecIndex_t numTotalAmps = 1L << numQubits;
-  const StateVecIndex_t numAmpsPerShard = numTotalAmps / numShards;
-
-  qureg->numQubitsInStateVec = numQubits;
-  qureg->numAmpsPerChunk = numTotalAmps;
-  qureg->numAmpsPerShard = numAmpsPerShard;
-  qureg->numAmpsTotal = numTotalAmps;
-  qureg->chunkId = env.rank;
-  qureg->numChunks = env.numRanks;
-  qureg->numShards = numShards;
-  qureg->numGlobalBits = NUM_GLOBAL_BITS;
-  qureg->numLocalBits = numQubits - NUM_GLOBAL_BITS;
-  qureg->isDensityMatrix = 0;
-
-  for (StateVecIndex_t i = 0; i < qureg->numShards; i++) {
-    checkCudaErrors(cudaMalloc(&(qureg->deviceStateVecShards[i].real), qureg->numAmpsPerShard * sizeof(qreal)));
-    checkCudaErrors(cudaMalloc(&(qureg->deviceStateVecShards[i].imag), qureg->numAmpsPerShard * sizeof(qreal)));
-  }
-}
-
-void statevec_destroyQureg(Qureg qureg, QuESTEnv env) {
-  for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-    checkCudaErrors(cudaFree(qureg.deviceStateVecShards[i].real));
-    checkCudaErrors(cudaFree(qureg.deviceStateVecShards[i].imag));
-  }
-}
-
 __forceinline__ __device__ int getBit(StateVecIndex_t num, int index) {
   return (num >> index) & 1;
 }
@@ -713,6 +621,98 @@ cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
   cudaGraph_t graph;
   checkCudaErrors(cudaStreamEndCapture(stream, &graph));
   return graph;
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define NUM_GLOBAL_BITS 4
+
+// Copied from QuEST_gpu_common.cu
+int GPUExists(void) {
+  int deviceCount, device;
+  int gpuDeviceCount = 0;
+  struct cudaDeviceProp properties;
+  cudaError_t cudaResultCode = cudaGetDeviceCount(&deviceCount);
+  if (cudaResultCode != cudaSuccess) deviceCount = 0;
+  /* machines with no GPUs can still report one emulation device */
+  for (device = 0; device < deviceCount; ++device) {
+    cudaGetDeviceProperties(&properties, device);
+    if (properties.major != 9999) { /* 9999 means emulation only */
+      ++gpuDeviceCount;
+    }
+  }
+  if (gpuDeviceCount)
+    return 1;
+  else
+    return 0;
+}
+
+// Copied from QuEST_gpu_common.cu
+void seedQuEST(QuESTEnv* env, unsigned long int* seedArray, int numSeeds) {
+  // free existing seed array, if exists
+  if (env->seeds != NULL)
+    free(env->seeds);
+
+  // record keys in permanent heap
+  env->seeds = (unsigned long int*)malloc(numSeeds * sizeof *(env->seeds));
+  for (int i = 0; i < numSeeds; i++)
+    (env->seeds)[i] = seedArray[i];
+  env->numSeeds = numSeeds;
+
+  // pass keys to Mersenne Twister seeder
+  init_by_array(seedArray, numSeeds);
+}
+
+QuESTEnv createQuESTEnv() {
+  validateGPUExists(GPUExists(), __func__);
+
+  QuESTEnv env;
+  env.rank = 0;
+  env.numRanks = 1;
+
+  env.seeds = NULL;
+  env.numSeeds = 0;
+  seedQuESTDefault(&env);
+
+  return env;
+}
+
+void destroyQuESTEnv(QuESTEnv env) {
+  free(env.seeds);
+}
+
+void statevec_createQureg(Qureg* qureg, int numQubits, QuESTEnv env) {
+  assert((1 << NUM_GLOBAL_BITS) <= MAX_NUM_SHARDS);
+  assert(numQubits > NUM_GLOBAL_BITS);
+
+  const StateVecIndex_t numShards = 1L << NUM_GLOBAL_BITS;
+  const StateVecIndex_t numTotalAmps = 1L << numQubits;
+  const StateVecIndex_t numAmpsPerShard = numTotalAmps / numShards;
+
+  qureg->numQubitsInStateVec = numQubits;
+  qureg->numAmpsPerChunk = numTotalAmps;
+  qureg->numAmpsPerShard = numAmpsPerShard;
+  qureg->numAmpsTotal = numTotalAmps;
+  qureg->chunkId = env.rank;
+  qureg->numChunks = env.numRanks;
+  qureg->numShards = numShards;
+  qureg->numGlobalBits = NUM_GLOBAL_BITS;
+  qureg->numLocalBits = numQubits - NUM_GLOBAL_BITS;
+  qureg->isDensityMatrix = 0;
+
+  for (StateVecIndex_t i = 0; i < qureg->numShards; i++) {
+    checkCudaErrors(cudaMalloc(&(qureg->deviceStateVecShards[i].real), qureg->numAmpsPerShard * sizeof(qreal)));
+    checkCudaErrors(cudaMalloc(&(qureg->deviceStateVecShards[i].imag), qureg->numAmpsPerShard * sizeof(qreal)));
+  }
+}
+
+void statevec_destroyQureg(Qureg qureg, QuESTEnv env) {
+  for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
+    checkCudaErrors(cudaFree(qureg.deviceStateVecShards[i].real));
+    checkCudaErrors(cudaFree(qureg.deviceStateVecShards[i].imag));
+  }
 }
 
 void applyFullQFTWithMemopt(Qureg qureg, char* configFilePath) {
