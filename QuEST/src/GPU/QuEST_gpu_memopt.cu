@@ -23,6 +23,9 @@ void __check(T result, char const* const func, const char* const file, int const
 
 typedef long long StateVecIndex_t;
 
+constexpr int MAX_NUM_QUBITS = 64;
+constexpr int MAX_NUM_PHASE_FUNC_OVERRIDES = 8;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,10 +69,6 @@ void seedQuEST(QuESTEnv* env, unsigned long int* seedArray, int numSeeds) {
 }
 
 QuESTEnv createQuESTEnv() {
-  memopt::SystemWallClock clock;
-  clock.start();
-  clock.logWithCurrentTime("hello from memopt");
-
   validateGPUExists(GPUExists(), __func__);
 
   QuESTEnv env;
@@ -259,14 +258,14 @@ __global__ void statevec_hadamardGlobalBitKernel(Qureg qureg, StateVecIndex_t gl
   *stateImagLo = factor * (stateImagUpValue - stateImagLoValue);
 }
 
-void statevec_hadamard(Qureg qureg, int targetQubit) {
+void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit) {
   if (targetQubit < qureg.numLocalBits) {
     StateVecIndex_t numThreadsPerBlock, numBlocks;
     numThreadsPerBlock = 128;
     numBlocks = ((qureg.numAmpsPerShard >> 1) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-      statevec_hadamardLocalBitKernel<<<numBlocks, numThreadsPerBlock>>>(
+      statevec_hadamardLocalBitKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
         qureg,
         i,
         targetQubit
@@ -278,7 +277,7 @@ void statevec_hadamard(Qureg qureg, int targetQubit) {
     numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 1); i++) {
-      statevec_hadamardGlobalBitKernel<<<numBlocks, numThreadsPerBlock>>>(
+      statevec_hadamardGlobalBitKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
         qureg,
         insertZeroBit(i, targetQubit - qureg.numLocalBits),
         targetQubit
@@ -494,12 +493,24 @@ __forceinline__ __device__ void applyPhaseToAmp(
   qureg->deviceStateVecShards[globalIndex].imag[localIndex] = re * s + im * c;
 }
 
+struct ApplyParamNamedPhaseFuncOverridesParams {
+  int qubits[MAX_NUM_QUBITS];
+  int numQubitsPerReg[MAX_NUM_QUBITS];
+  int numRegs;
+  enum bitEncoding encoding;
+  enum phaseFunc phaseFuncName;
+  qreal params[MAX_NUM_QUBITS + 2];
+  int numParams;
+  StateVecIndex_t overrideInds[MAX_NUM_PHASE_FUNC_OVERRIDES];
+  qreal overridePhases[MAX_NUM_PHASE_FUNC_OVERRIDES];
+  int numOverrides;
+  int conj;
+};
+
 __global__ void statevec_applyParamNamedPhaseFuncOverridesKernel(
-  Qureg qureg, int* qubits, int* numQubitsPerReg, int numRegs, enum bitEncoding encoding,
-  enum phaseFunc phaseFuncName, qreal* params, int numParams,
-  StateVecIndex_t* overrideInds, qreal* overridePhases, int numOverrides,
+  Qureg qureg,
+  ApplyParamNamedPhaseFuncOverridesParams params,
   StateVecIndex_t* phaseInds,
-  int conj,
   StateVecIndex_t globalIndex
 ) {
   const StateVecIndex_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -508,83 +519,46 @@ __global__ void statevec_applyParamNamedPhaseFuncOverridesKernel(
   StateVecIndex_t fullIndex = idx + (globalIndex << qureg.numLocalBits);
 
   // Determine phase indices (each thread has phaseInds[numRegs] sub-array)
-  setMultiRegPhaseInds(&qureg, phaseInds, fullIndex, qubits, numQubitsPerReg, numRegs, encoding);
+  setMultiRegPhaseInds(&qureg, phaseInds, fullIndex, params.qubits, params.numQubitsPerReg, params.numRegs, params.encoding);
 
   // Determine if this phase index has an overriden value
-  StateVecIndex_t overrideCaseIndex = getIndOfMultiRegPhaseOverride(&qureg, fullIndex, phaseInds, numRegs, overrideInds, numOverrides);
+  StateVecIndex_t overrideCaseIndex = getIndOfMultiRegPhaseOverride(&qureg, fullIndex, phaseInds, params.numRegs, params.overrideInds, params.numOverrides);
 
   // Determine the phase, or the overriden one
   qreal phase = 0;
-  if (overrideCaseIndex < numOverrides)
-    phase = overridePhases[overrideCaseIndex];
+  if (overrideCaseIndex < params.numOverrides)
+    phase = params.overridePhases[overrideCaseIndex];
   else
-    phase = getPhaseFromParamNamedFunc(&qureg, fullIndex, phaseInds, numRegs, phaseFuncName, params, numParams);
+    phase = getPhaseFromParamNamedFunc(&qureg, fullIndex, phaseInds, params.numRegs, params.phaseFuncName, params.params, params.numParams);
 
   // Modify amp to amp * exp(i phase)
-  applyPhaseToAmp(&qureg, globalIndex, idx, phase, conj);
+  applyPhaseToAmp(&qureg, globalIndex, idx, phase, params.conj);
 }
 
-void statevec_applyParamNamedPhaseFuncOverrides(
-  Qureg qureg, int* qubits, int* numQubitsPerReg, int numRegs, enum bitEncoding encoding,
-  enum phaseFunc phaseFuncName, qreal* params, int numParams,
-  StateVecIndex_t* overrideInds, qreal* overridePhases, int numOverrides,
-  int conj
+void memopt_statevec_applyParamNamedPhaseFuncOverrides(
+  cudaStream_t stream,
+  Qureg qureg,
+  ApplyParamNamedPhaseFuncOverridesParams params
 ) {
-  // determine size of arrays, for cloning into GPU memory
-  size_t mem_numQubitsPerReg = numRegs * sizeof(*numQubitsPerReg);
-  size_t mem_overridePhases = numOverrides * sizeof(*overridePhases);
-  size_t mem_overrideInds = numOverrides * numRegs * sizeof(*overrideInds);
-  size_t mem_params = numParams * sizeof(*params);
-  size_t mem_qubits = 0;
-  for (int r = 0; r < numRegs; r++)
-    mem_qubits += numQubitsPerReg[r] * sizeof(*qubits);
-
-  // Allocate global GPU memory
-  int* d_qubits;
-  checkCudaErrors(cudaMalloc(&d_qubits, mem_qubits));
-  int* d_numQubitsPerReg;
-  checkCudaErrors(cudaMalloc(&d_numQubitsPerReg, mem_numQubitsPerReg));
-  StateVecIndex_t* d_overrideInds;
-  checkCudaErrors(cudaMalloc(&d_overrideInds, mem_overrideInds));
-  qreal* d_overridePhases;
-  checkCudaErrors(cudaMalloc(&d_overridePhases, mem_overridePhases));
-  qreal* d_params = NULL;
-  if (numParams > 0) checkCudaErrors(cudaMalloc(&d_params, mem_params));
-
-  // Copy function args into GPU memory
-  checkCudaErrors(cudaMemcpy(d_qubits, qubits, mem_qubits, cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemcpy(d_numQubitsPerReg, numQubitsPerReg, mem_numQubitsPerReg, cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemcpy(d_overrideInds, overrideInds, mem_overrideInds, cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemcpy(d_overridePhases, overridePhases, mem_overridePhases, cudaMemcpyHostToDevice));
-  if (numParams > 0)
-    checkCudaErrors(cudaMemcpy(d_params, params, mem_params, cudaMemcpyHostToDevice));
-
   StateVecIndex_t numThreadsPerBlock, numBlocks;
   numThreadsPerBlock = 128;
   numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
+  // TODO: allocate for each task individually
   // Allocate thread-local working space
   StateVecIndex_t* d_phaseInds;
-  checkCudaErrors(cudaMalloc(&d_phaseInds, numRegs * qureg.numAmpsTotal * sizeof *d_phaseInds));
+  checkCudaErrors(cudaMallocAsync(&d_phaseInds, params.numRegs * qureg.numAmpsTotal * sizeof *d_phaseInds, stream));
 
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-    statevec_applyParamNamedPhaseFuncOverridesKernel<<<numBlocks, numThreadsPerBlock>>>(
-      qureg, d_qubits, d_numQubitsPerReg, numRegs, encoding,
-      phaseFuncName, d_params, numParams,
-      d_overrideInds, d_overridePhases, numOverrides,
+    statevec_applyParamNamedPhaseFuncOverridesKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
+      qureg,
+      params,
       d_phaseInds,
-      conj,
       i
     );
   }
 
-  checkCudaErrors(cudaFree(d_qubits));
-  checkCudaErrors(cudaFree(d_numQubitsPerReg));
-  checkCudaErrors(cudaFree(d_overrideInds));
-  checkCudaErrors(cudaFree(d_overridePhases));
-  checkCudaErrors(cudaFree(d_phaseInds));
-  if (numParams > 0)
-    checkCudaErrors(cudaFree(d_params));
+  checkCudaErrors(cudaFreeAsync(d_phaseInds, stream));
 }
 
 __global__ void statevec_swapQubitAmpsBothLocalKernel(Qureg qureg, StateVecIndex_t globalIndex, int qb1, int qb2) {
@@ -639,7 +613,7 @@ __global__ void statevec_swapQubitAmpsOneLocalOneGlobalKernel(Qureg qureg, State
   qureg.deviceStateVecShards[globalIndexLo].imag[localIndexUp] = im01;
 }
 
-void statevec_swapQubitAmps(Qureg qureg, int qb1, int qb2) {
+void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, int qb2) {
   // Make sure qb1 < qb2
   if (qb2 < qb1) {
     int temp = qb1;
@@ -654,7 +628,7 @@ void statevec_swapQubitAmps(Qureg qureg, int qb1, int qb2) {
     numBlocks = ((qureg.numAmpsPerShard >> 2) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-      statevec_swapQubitAmpsBothLocalKernel<<<numBlocks, numThreadsPerBlock>>>(
+      statevec_swapQubitAmpsBothLocalKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
         qureg,
         i,
         qb1,
@@ -668,7 +642,7 @@ void statevec_swapQubitAmps(Qureg qureg, int qb1, int qb2) {
     numBlocks = ((qureg.numAmpsPerShard >> 1) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 1); i++) {
-      statevec_swapQubitAmpsOneLocalOneGlobalKernel<<<numBlocks, numThreadsPerBlock>>>(
+      statevec_swapQubitAmpsOneLocalOneGlobalKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
         qureg,
         insertZeroBit(i, qb2 - qureg.numLocalBits),
         qb1,
@@ -676,27 +650,94 @@ void statevec_swapQubitAmps(Qureg qureg, int qb1, int qb2) {
       );
     }
   } else {
+    // TODO: Allocate workspace for each task individually
     // Both are global bits
     qreal *realTemp, *imagTemp;
-    checkCudaErrors(cudaMalloc(&realTemp, qureg.numAmpsPerShard * sizeof(qreal)));
-    checkCudaErrors(cudaMalloc(&imagTemp, qureg.numAmpsPerShard * sizeof(qreal)));
+    checkCudaErrors(cudaMallocAsync(&realTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
+    checkCudaErrors(cudaMallocAsync(&imagTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 2); i++) {
       StateVecIndex_t globalIndex00 = insertTwoZeroBits(i, qb1 - qureg.numLocalBits, qb2 - qureg.numLocalBits);
       StateVecIndex_t globalIndex01 = flipBit(globalIndex00, qb1 - qureg.numLocalBits);
       StateVecIndex_t globalIndex10 = flipBit(globalIndex00, qb2 - qureg.numLocalBits);
-      checkCudaErrors(cudaMemcpy(realTemp, qureg.deviceStateVecShards[globalIndex01].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
-      checkCudaErrors(cudaMemcpy(imagTemp, qureg.deviceStateVecShards[globalIndex01].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
-      checkCudaErrors(cudaMemcpy(qureg.deviceStateVecShards[globalIndex01].real, qureg.deviceStateVecShards[globalIndex10].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
-      checkCudaErrors(cudaMemcpy(qureg.deviceStateVecShards[globalIndex01].imag, qureg.deviceStateVecShards[globalIndex10].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
-      checkCudaErrors(cudaMemcpy(qureg.deviceStateVecShards[globalIndex10].real, realTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
-      checkCudaErrors(cudaMemcpy(qureg.deviceStateVecShards[globalIndex10].imag, imagTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
+      checkCudaErrors(cudaMemcpyAsync(realTemp, qureg.deviceStateVecShards[globalIndex01].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
+      checkCudaErrors(cudaMemcpyAsync(imagTemp, qureg.deviceStateVecShards[globalIndex01].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
+      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex01].real, qureg.deviceStateVecShards[globalIndex10].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
+      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex01].imag, qureg.deviceStateVecShards[globalIndex10].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
+      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex10].real, realTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
+      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex10].imag, imagTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
     }
+
+    checkCudaErrors(cudaFreeAsync(realTemp, stream));
+    checkCudaErrors(cudaFreeAsync(imagTemp, stream));
   }
 }
 
+cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
+  // Does not support density matrix
+  assert(!qureg.isDensityMatrix);
+
+  checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+
+  // Start with top/left-most qubit, work down
+  for (int q = qureg.numQubitsInStateVec - 1; q >= 0; q--) {
+    memopt_statevec_hadamard(stream, qureg, q);
+
+    if (q == 0)
+      break;
+
+    ApplyParamNamedPhaseFuncOverridesParams params;
+    params.numRegs = 2;
+    params.numQubitsPerReg[0] = q;
+    params.numQubitsPerReg[1] = 1;
+    for (int i = 0; i < q + 1; i++)
+      params.qubits[i] = i;
+
+    params.numParams = 1;
+    params.params[1] = M_PI / (1 << q);
+
+    params.encoding = UNSIGNED;
+    params.phaseFuncName = SCALED_PRODUCT;
+
+    params.numOverrides = 0;
+
+    params.conj = 0;
+
+    memopt_statevec_applyParamNamedPhaseFuncOverrides(stream, qureg, params);
+  }
+
+  for (int i = 0; i < (qureg.numQubitsInStateVec / 2); i++) {
+    int qb1 = i;
+    int qb2 = qureg.numQubitsInStateVec - i - 1;
+
+    memopt_statevec_swapQubitAmps(stream, qureg, qb1, qb2);
+  }
+
+  cudaGraph_t graph;
+  checkCudaErrors(cudaStreamEndCapture(stream, &graph));
+  return graph;
+}
+
 void applyFullQFTWithMemopt(Qureg qureg, char* configFilePath) {
-  printf("applyFullQFTWithMemopt\n");
+  memopt::ConfigurationManager::exportDefaultConfiguration();
+  if (configFilePath) {
+    memopt::ConfigurationManager::loadConfiguration(configFilePath);
+  } else {
+    memopt::ConfigurationManager::loadConfiguration();
+  }
+  cudaStream_t stream;
+  checkCudaErrors(cudaStreamCreate(&stream));
+
+  cudaGraph_t graph = captureCudaGraphForFullQFT(stream, qureg);
+
+  cudaGraphExec_t graphExec;
+  checkCudaErrors(cudaGraphInstantiate(&graphExec, graph));
+  checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+  checkCudaErrors(cudaStreamSynchronize(stream));
+
+  checkCudaErrors(cudaGraphExecDestroy(graphExec));
+  checkCudaErrors(cudaGraphDestroy(graph));
+  checkCudaErrors(cudaStreamDestroy(stream));
 }
 
 #ifdef __cplusplus
