@@ -7289,6 +7289,8 @@ void applyParamNamedPhaseFuncOverrides(Qureg qureg, int* qubits, int* numQubitsP
  */
 void applyFullQFT(Qureg qureg);
 
+void applyFullQFTWithMemopt(Qureg qureg, char *configFilePath);
+
 /** Applies the quantum Fourier transform (QFT) to a specific subset of qubits 
  * of the register \p qureg. 
  *

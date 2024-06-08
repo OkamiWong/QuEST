@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
 
   initZeroState(qureg);
 
-  applyFullQFT(qureg);
+  applyFullQFTWithMemopt(qureg, "config.json");
 
   printf("prob of solution |%llx> = %.8lf\n", 0, getProbAmp(qureg, 0));
   long long index = 0;

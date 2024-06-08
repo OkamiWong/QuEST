@@ -4,7 +4,6 @@
 #include <stdlib.h>
 
 #include "../../../dependencies/optimize-cuda-memory-usage-v1/public/memopt.hpp"
-
 #include "QuEST.h"
 #include "QuEST_gpu_common.h"
 #include "QuEST_internal.h"
@@ -694,6 +693,10 @@ void statevec_swapQubitAmps(Qureg qureg, int qb1, int qb2) {
       checkCudaErrors(cudaMemcpy(qureg.deviceStateVecShards[globalIndex10].imag, imagTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
     }
   }
+}
+
+void applyFullQFTWithMemopt(Qureg qureg, char* configFilePath) {
+  printf("applyFullQFTWithMemopt\n");
 }
 
 #ifdef __cplusplus
