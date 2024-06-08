@@ -11,6 +11,7 @@
 #include "QuEST_validation.h"
 #include "mt19937ar.h"
 
+// General utilities
 template <typename T>
 void __check(T result, char const* const func, const char* const file, int const line) {
   if (result) {
@@ -21,6 +22,16 @@ void __check(T result, char const* const func, const char* const file, int const
 
 #define checkCudaErrors(val) __check((val), #val, __FILE__, __LINE__)
 
+// Memopt wrappers
+template <typename T>
+void allocateShardAndRegister(T** p, size_t s) {
+  checkCudaErrors(cudaMalloc(p, s));
+  memopt::registerManagedMemoryAddress(*p, s);
+  memopt::registerApplicationInput(*p);
+  memopt::registerApplicationOutput(*p);
+}
+
+// QuEST speicifc definitions
 typedef long long StateVecIndex_t;
 
 constexpr int MAX_NUM_QUBITS = 64;
@@ -666,6 +677,10 @@ void seedQuEST(QuESTEnv* env, unsigned long int* seedArray, int numSeeds) {
 }
 
 QuESTEnv createQuESTEnv() {
+  // Initialize memopt
+  memopt::ConfigurationManager::exportDefaultConfiguration();
+  memopt::ConfigurationManager::loadConfiguration();
+
   validateGPUExists(GPUExists(), __func__);
 
   QuESTEnv env;
@@ -703,8 +718,8 @@ void statevec_createQureg(Qureg* qureg, int numQubits, QuESTEnv env) {
   qureg->isDensityMatrix = 0;
 
   for (StateVecIndex_t i = 0; i < qureg->numShards; i++) {
-    checkCudaErrors(cudaMalloc(&(qureg->deviceStateVecShards[i].real), qureg->numAmpsPerShard * sizeof(qreal)));
-    checkCudaErrors(cudaMalloc(&(qureg->deviceStateVecShards[i].imag), qureg->numAmpsPerShard * sizeof(qreal)));
+    allocateShardAndRegister(&(qureg->deviceStateVecShards[i].real), qureg->numAmpsPerShard * sizeof(qreal));
+    allocateShardAndRegister(&(qureg->deviceStateVecShards[i].imag), qureg->numAmpsPerShard * sizeof(qreal));
   }
 }
 
@@ -715,13 +730,7 @@ void statevec_destroyQureg(Qureg qureg, QuESTEnv env) {
   }
 }
 
-void applyFullQFTWithMemopt(Qureg qureg, char* configFilePath) {
-  memopt::ConfigurationManager::exportDefaultConfiguration();
-  if (configFilePath) {
-    memopt::ConfigurationManager::loadConfiguration(configFilePath);
-  } else {
-    memopt::ConfigurationManager::loadConfiguration();
-  }
+void applyFullQFTWithMemopt(Qureg qureg) {
   cudaStream_t stream;
   checkCudaErrors(cudaStreamCreate(&stream));
 
