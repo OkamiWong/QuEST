@@ -742,6 +742,8 @@ void applyFullQFTWithMemopt(Qureg qureg) {
 
   cudaGraph_t graph = captureCudaGraphForFullQFT(stream, qureg);
 
+  checkCudaErrors(cudaGraphDebugDotPrint(graph, "graph.dot", cudaGraphDebugDotFlagsVerbose));
+
   cudaGraphExec_t graphExec;
   checkCudaErrors(cudaGraphInstantiate(&graphExec, graph));
   checkCudaErrors(cudaGraphLaunch(graphExec, stream));
