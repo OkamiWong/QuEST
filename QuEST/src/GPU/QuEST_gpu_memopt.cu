@@ -211,7 +211,7 @@ __forceinline__ __device__ void setMultiRegPhaseInds(
   int* qubits, int* numQubitsPerReg, int numRegs, enum bitEncoding encoding
 ) {
   size_t stride = qureg->numAmpsPerShard;
-  size_t offset = fullIndex;
+  size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
 
   if (encoding == UNSIGNED) {
     int flatIndex = 0;
@@ -241,7 +241,7 @@ __forceinline__ __device__ StateVecIndex_t getIndOfMultiRegPhaseOverride(
   StateVecIndex_t* overrideInds, int numOverrides
 ) {
   size_t stride = qureg->numAmpsPerShard;
-  size_t offset = fullIndex;
+  size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
 
   int i;
   for (i = 0; i < numOverrides; i++) {
@@ -366,7 +366,7 @@ __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
   enum phaseFunc phaseFuncName, qreal* params, int numParams
 ) {
   size_t stride = qureg->numAmpsPerShard;
-  size_t offset = fullIndex;
+  size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
 
   if (
     phaseFuncName == NORM
@@ -731,6 +731,12 @@ void statevec_destroyQureg(Qureg qureg, QuESTEnv env) {
 }
 
 void applyFullQFTWithMemopt(Qureg qureg) {
+  size_t totalShardSize = 0;
+  for (const auto& [addr, size] : memopt::MemoryManager::managedMemoryAddressToSizeMap) {
+    totalShardSize += size;
+  }
+  printf("totalShardSize (MiB) = %.6lf\n", (double)totalShardSize * 1e-6);
+
   cudaStream_t stream;
   checkCudaErrors(cudaStreamCreate(&stream));
 
