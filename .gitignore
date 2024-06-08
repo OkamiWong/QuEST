@@ -6,3 +6,12 @@
 Doxygen_doc/
 build*/
 *.log
+
+# Config
+config.json
+currentConfig.json
+defaultConfig.json
+
+# Debug
+*.dot
+*.out
