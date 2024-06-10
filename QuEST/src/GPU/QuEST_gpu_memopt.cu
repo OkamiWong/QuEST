@@ -81,6 +81,18 @@ void executeRandomTask(Qureg qureg, int taskId, std::map<void*, void*> addressUp
   tasks[taskId](qureg, stream);
 }
 
+template <typename T>
+void moveDataBackToDevice(T*& oldAddress, const std::map<void*, void*>& managedDeviceArrayToHostArrayMap, size_t numAmpsPerShard) {
+  auto newAddress = managedDeviceArrayToHostArrayMap.at(oldAddress);
+  checkCudaErrors(cudaMalloc(&oldAddress, numAmpsPerShard * sizeof(qreal)));
+  checkCudaErrors(cudaMemcpy(oldAddress, newAddress, numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
+  if (memopt::ConfigurationManager::getConfig().useNvlink) {
+    checkCudaErrors(cudaFree(newAddress));
+  } else {
+    free(newAddress);
+  }
+}
+
 }  // namespace memopt_adapter
 
 // QuEST speicifc definitions
@@ -745,7 +757,7 @@ cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
 extern "C" {
 #endif
 
-#define NUM_GLOBAL_BITS 4
+#define NUM_GLOBAL_BITS 3
 
 // Copied from QuEST_gpu_common.cu
 int GPUExists(void) {
@@ -787,6 +799,7 @@ QuESTEnv createQuESTEnv() {
   // Initialize memopt
   memopt::ConfigurationManager::exportDefaultConfiguration();
   memopt::ConfigurationManager::loadConfiguration();
+  checkCudaErrors(cudaSetDevice(memopt::Constants::DEVICE_ID));
 
   validateGPUExists(GPUExists(), __func__);
 
@@ -837,7 +850,7 @@ void statevec_destroyQureg(Qureg qureg, QuESTEnv env) {
   }
 }
 
-void applyFullQFTWithMemopt(Qureg qureg) {
+void applyFullQFTWithMemopt(Qureg* qureg) {
   size_t totalShardSize = 0;
   for (const auto& [addr, size] : memopt::MemoryManager::managedMemoryAddressToSizeMap) {
     totalShardSize += size;
@@ -847,18 +860,43 @@ void applyFullQFTWithMemopt(Qureg qureg) {
   cudaStream_t stream;
   checkCudaErrors(cudaStreamCreate(&stream));
 
-  cudaGraph_t graph = captureCudaGraphForFullQFT(stream, qureg);
+  cudaGraph_t graph = captureCudaGraphForFullQFT(stream, *qureg);
 
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "graph.dot", cudaGraphDebugDotFlagsVerbose));
 
-  cudaGraphExec_t graphExec;
-  checkCudaErrors(cudaGraphInstantiate(&graphExec, graph));
-  checkCudaErrors(cudaGraphLaunch(graphExec, stream));
-  checkCudaErrors(cudaStreamSynchronize(stream));
+  if (memopt::ConfigurationManager::getConfig().optimize) {
+    auto optimizedGraph = memopt::profileAndOptimize(graph);
 
-  checkCudaErrors(cudaGraphExecDestroy(graphExec));
-  checkCudaErrors(cudaGraphDestroy(graph));
-  checkCudaErrors(cudaStreamDestroy(stream));
+    statevec_initZeroState(*qureg);
+
+    float runningTime;
+    std::map<void*, void*> managedDeviceArrayToHostArrayMap;
+    memopt::executeOptimizedGraph(
+      optimizedGraph,
+      [=](int taskId, std::map<void*, void*> addressUpdate, cudaStream_t stream) {
+        memopt_adapter::executeRandomTask(*qureg, taskId, addressUpdate, stream);
+      },
+      runningTime,
+      managedDeviceArrayToHostArrayMap
+    );
+
+    printf("Total time used (s): %.6f\n", runningTime);
+
+    for (StateVecIndex_t i = 0; i < qureg->numShards; i++) {
+      memopt_adapter::moveDataBackToDevice(qureg->deviceStateVecShards[i].real, managedDeviceArrayToHostArrayMap, qureg->numAmpsPerShard);
+      memopt_adapter::moveDataBackToDevice(qureg->deviceStateVecShards[i].imag, managedDeviceArrayToHostArrayMap, qureg->numAmpsPerShard);
+    }
+    checkCudaErrors(cudaDeviceSynchronize());
+  } else {
+    cudaGraphExec_t graphExec;
+    checkCudaErrors(cudaGraphInstantiate(&graphExec, graph));
+    checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    checkCudaErrors(cudaGraphExecDestroy(graphExec));
+    checkCudaErrors(cudaGraphDestroy(graph));
+    checkCudaErrors(cudaStreamDestroy(stream));
+  }
 }
 
 #ifdef __cplusplus

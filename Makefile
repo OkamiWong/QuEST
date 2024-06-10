@@ -7,7 +7,8 @@ config:
 	-DUSE_CUQUANTUM=0 -DUSE_MEMOPT=1 \
 	-DUSER_SOURCE=examples/qft.c \
 	-DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
-	-DCMAKE_PREFIX_PATH=${ORTOOLS_ROOT}
+	-DCMAKE_PREFIX_PATH=${ORTOOLS_ROOT} \
+	-DCMAKE_BUILD_TYPE=Debug
 
 .PHONY: build
 build:
