@@ -1,7 +1,10 @@
-#include <assert.h>
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <map>
+#include <vector>
 
 #include "../../../dependencies/optimize-cuda-memory-usage-v1/public/memopt.hpp"
 #include "QuEST.h"
@@ -22,7 +25,11 @@ void __check(T result, char const* const func, const char* const file, int const
 
 #define checkCudaErrors(val) __check((val), #val, __FILE__, __LINE__)
 
+typedef long long StateVecIndex_t;
+
 // Memopt wrappers
+namespace memopt_adapter {
+
 template <typename T>
 void allocateShardAndRegister(T** p, size_t s) {
   checkCudaErrors(cudaMalloc(p, s));
@@ -31,9 +38,52 @@ void allocateShardAndRegister(T** p, size_t s) {
   memopt::registerApplicationOutput(*p);
 }
 
-// QuEST speicifc definitions
-typedef long long StateVecIndex_t;
+typedef std::function<void(Qureg, cudaStream_t)> Task;
 
+std::vector<Task> tasks;
+
+void registerAndExecuteTask(
+  std::vector<StateVecIndex_t> inputShardIndices,
+  std::vector<StateVecIndex_t> outputShardIndices,
+  Task task,
+  Qureg qureg,
+  cudaStream_t stream
+) {
+  auto taskId = tasks.size();
+  tasks.push_back(task);
+
+  std::vector<void*> inputs, outputs;
+  for (auto i : inputShardIndices) {
+    inputs.push_back(qureg.deviceStateVecShards[i].real);
+    inputs.push_back(qureg.deviceStateVecShards[i].imag);
+  }
+  for (auto i : outputShardIndices) {
+    outputs.push_back(qureg.deviceStateVecShards[i].real);
+    outputs.push_back(qureg.deviceStateVecShards[i].imag);
+  }
+
+  memopt::annotateNextTask(taskId, inputs, outputs, stream);
+  task(qureg, stream);
+}
+
+template <typename T>
+void tryUpdatingAddress(T*& oldAddress, const std::map<void*, void*>& addressUpdateMap) {
+  if (addressUpdateMap.count(oldAddress) > 0) {
+    oldAddress = (T*)addressUpdateMap.at(oldAddress);
+  }
+}
+
+void executeRandomTask(Qureg qureg, int taskId, std::map<void*, void*> addressUpdateMap, cudaStream_t stream) {
+  for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
+    tryUpdatingAddress(qureg.deviceStateVecShards[i].real, addressUpdateMap);
+    tryUpdatingAddress(qureg.deviceStateVecShards[i].imag, addressUpdateMap);
+  }
+  tasks[taskId](qureg, stream);
+}
+
+}  // namespace memopt_adapter
+
+// QuEST speicifc definitions
 constexpr int MAX_NUM_QUBITS = 64;
 constexpr int MAX_NUM_PHASE_FUNC_OVERRIDES = 8;
 
@@ -184,10 +234,19 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
     numBlocks = ((qureg.numAmpsPerShard >> 1) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-      statevec_hadamardLocalBitKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
+      memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
+        statevec_hadamardLocalBitKernel<<<numBlocks, numThreadsPerBlock, 0, s>>>(
+          q,
+          i,
+          targetQubit
+        );
+      };
+      memopt_adapter::registerAndExecuteTask(
+        {i},
+        {i},
+        task,
         qureg,
-        i,
-        targetQubit
+        stream
       );
     }
   } else {
@@ -196,10 +255,21 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
     numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 1); i++) {
-      statevec_hadamardGlobalBitKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
+      StateVecIndex_t globalIndexUp = insertZeroBit(i, targetQubit - qureg.numLocalBits);
+      StateVecIndex_t globalIndexLo = flipBit(globalIndexUp, targetQubit - qureg.numLocalBits);
+      memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
+        statevec_hadamardGlobalBitKernel<<<numBlocks, numThreadsPerBlock, 0, s>>>(
+          q,
+          globalIndexUp,
+          targetQubit
+        );
+      };
+      memopt_adapter::registerAndExecuteTask(
+        {globalIndexUp, globalIndexLo},
+        {globalIndexUp, globalIndexLo},
+        task,
         qureg,
-        insertZeroBit(i, targetQubit - qureg.numLocalBits),
-        targetQubit
+        stream
       );
     }
   }
@@ -464,15 +534,24 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
   numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-    StateVecIndex_t* d_phaseInds;
-    checkCudaErrors(cudaMallocAsync(&d_phaseInds, params.numRegs * qureg.numAmpsPerShard * sizeof *d_phaseInds, stream));
-    statevec_applyParamNamedPhaseFuncOverridesKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
+    memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
+      StateVecIndex_t* d_phaseInds;
+      checkCudaErrors(cudaMallocAsync(&d_phaseInds, params.numRegs * q.numAmpsPerShard * sizeof *d_phaseInds, s));
+      statevec_applyParamNamedPhaseFuncOverridesKernel<<<numBlocks, numThreadsPerBlock, 0, s>>>(
+        q,
+        params,
+        d_phaseInds,
+        i
+      );
+      checkCudaErrors(cudaFreeAsync(d_phaseInds, s));
+    };
+    memopt_adapter::registerAndExecuteTask(
+      {i},
+      {i},
+      task,
       qureg,
-      params,
-      d_phaseInds,
-      i
+      stream
     );
-    checkCudaErrors(cudaFreeAsync(d_phaseInds, stream));
   }
 }
 
@@ -543,11 +622,20 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
     numBlocks = ((qureg.numAmpsPerShard >> 2) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-      statevec_swapQubitAmpsBothLocalKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
+      memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
+        statevec_swapQubitAmpsBothLocalKernel<<<numBlocks, numThreadsPerBlock, 0, s>>>(
+          q,
+          i,
+          qb1,
+          qb2
+        );
+      };
+      memopt_adapter::registerAndExecuteTask(
+        {i},
+        {i},
+        task,
         qureg,
-        i,
-        qb1,
-        qb2
+        stream
       );
     }
   } else if (qb1 < qureg.numLocalBits) {
@@ -557,34 +645,53 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
     numBlocks = ((qureg.numAmpsPerShard >> 1) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 1); i++) {
-      statevec_swapQubitAmpsOneLocalOneGlobalKernel<<<numBlocks, numThreadsPerBlock, 0, stream>>>(
+      StateVecIndex_t globalIndexUp = insertZeroBit(i, qb2 - qureg.numLocalBits);
+      StateVecIndex_t globalIndexLo = flipBit(globalIndexUp, qb2 - qureg.numLocalBits);
+      memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
+        statevec_swapQubitAmpsOneLocalOneGlobalKernel<<<numBlocks, numThreadsPerBlock, 0, s>>>(
+          q,
+          globalIndexUp,
+          qb1,
+          qb2
+        );
+      };
+      memopt_adapter::registerAndExecuteTask(
+        {globalIndexUp, globalIndexLo},
+        {globalIndexUp, globalIndexLo},
+        task,
         qureg,
-        insertZeroBit(i, qb2 - qureg.numLocalBits),
-        qb1,
-        qb2
+        stream
       );
     }
   } else {
     // Both are global bits
-
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 2); i++) {
-      qreal *realTemp, *imagTemp;
-      checkCudaErrors(cudaMallocAsync(&realTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
-      checkCudaErrors(cudaMallocAsync(&imagTemp, qureg.numAmpsPerShard * sizeof(qreal), stream));
-
       StateVecIndex_t globalIndex00 = insertTwoZeroBits(i, qb1 - qureg.numLocalBits, qb2 - qureg.numLocalBits);
       StateVecIndex_t globalIndex01 = flipBit(globalIndex00, qb1 - qureg.numLocalBits);
       StateVecIndex_t globalIndex10 = flipBit(globalIndex00, qb2 - qureg.numLocalBits);
 
-      checkCudaErrors(cudaMemcpyAsync(realTemp, qureg.deviceStateVecShards[globalIndex01].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
-      checkCudaErrors(cudaMemcpyAsync(imagTemp, qureg.deviceStateVecShards[globalIndex01].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
-      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex01].real, qureg.deviceStateVecShards[globalIndex10].real, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
-      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex01].imag, qureg.deviceStateVecShards[globalIndex10].imag, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
-      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex10].real, realTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
-      checkCudaErrors(cudaMemcpyAsync(qureg.deviceStateVecShards[globalIndex10].imag, imagTemp, qureg.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, stream));
+      memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
+        qreal *realTemp, *imagTemp;
+        checkCudaErrors(cudaMallocAsync(&realTemp, q.numAmpsPerShard * sizeof(qreal), s));
+        checkCudaErrors(cudaMallocAsync(&imagTemp, q.numAmpsPerShard * sizeof(qreal), s));
 
-      checkCudaErrors(cudaFreeAsync(realTemp, stream));
-      checkCudaErrors(cudaFreeAsync(imagTemp, stream));
+        checkCudaErrors(cudaMemcpyAsync(realTemp, q.deviceStateVecShards[globalIndex01].real, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(imagTemp, q.deviceStateVecShards[globalIndex01].imag, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex01].real, q.deviceStateVecShards[globalIndex10].real, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex01].imag, q.deviceStateVecShards[globalIndex10].imag, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex10].real, realTemp, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex10].imag, imagTemp, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+
+        checkCudaErrors(cudaFreeAsync(realTemp, s));
+        checkCudaErrors(cudaFreeAsync(imagTemp, s));
+      };
+      memopt_adapter::registerAndExecuteTask(
+        {globalIndex01, globalIndex10},
+        {globalIndex01, globalIndex10},
+        task,
+        qureg,
+        stream
+      );
     }
   }
 }
@@ -718,8 +825,8 @@ void statevec_createQureg(Qureg* qureg, int numQubits, QuESTEnv env) {
   qureg->isDensityMatrix = 0;
 
   for (StateVecIndex_t i = 0; i < qureg->numShards; i++) {
-    allocateShardAndRegister(&(qureg->deviceStateVecShards[i].real), qureg->numAmpsPerShard * sizeof(qreal));
-    allocateShardAndRegister(&(qureg->deviceStateVecShards[i].imag), qureg->numAmpsPerShard * sizeof(qreal));
+    memopt_adapter::allocateShardAndRegister(&(qureg->deviceStateVecShards[i].real), qureg->numAmpsPerShard * sizeof(qreal));
+    memopt_adapter::allocateShardAndRegister(&(qureg->deviceStateVecShards[i].imag), qureg->numAmpsPerShard * sizeof(qreal));
   }
 }
 
