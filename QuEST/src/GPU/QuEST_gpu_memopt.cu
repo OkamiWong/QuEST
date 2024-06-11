@@ -862,6 +862,8 @@ void applyFullQFTWithMemopt(Qureg* qureg) {
 
   cudaGraph_t graph = captureCudaGraphForFullQFT(stream, *qureg);
 
+  printf("Number of tasks = %llu\n", memopt_adapter::tasks.size());
+
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "graph.dot", cudaGraphDebugDotFlagsVerbose));
 
   if (memopt::ConfigurationManager::getConfig().optimize) {
