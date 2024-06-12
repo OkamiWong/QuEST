@@ -55,11 +55,9 @@ void registerAndExecuteTask(
   std::vector<void*> inputs, outputs;
   for (auto i : inputShardIndices) {
     inputs.push_back(qureg.deviceStateVecShards[i].real);
-    inputs.push_back(qureg.deviceStateVecShards[i].imag);
   }
   for (auto i : outputShardIndices) {
     outputs.push_back(qureg.deviceStateVecShards[i].real);
-    outputs.push_back(qureg.deviceStateVecShards[i].imag);
   }
 
   memopt::annotateNextTask(taskId, inputs, outputs, stream);
@@ -76,7 +74,7 @@ void tryUpdatingAddress(T*& oldAddress, const std::map<void*, void*>& addressUpd
 void executeRandomTask(Qureg qureg, int taskId, std::map<void*, void*> addressUpdateMap, cudaStream_t stream) {
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
     tryUpdatingAddress(qureg.deviceStateVecShards[i].real, addressUpdateMap);
-    tryUpdatingAddress(qureg.deviceStateVecShards[i].imag, addressUpdateMap);
+    qureg.deviceStateVecShards[i].imag = qureg.deviceStateVecShards[i].real + qureg.numAmpsPerShard;
   }
   tasks[taskId](qureg, stream);
 }
@@ -84,8 +82,8 @@ void executeRandomTask(Qureg qureg, int taskId, std::map<void*, void*> addressUp
 template <typename T>
 void moveDataBackToDevice(T*& oldAddress, const std::map<void*, void*>& managedDeviceArrayToHostArrayMap, size_t numAmpsPerShard) {
   auto newAddress = managedDeviceArrayToHostArrayMap.at(oldAddress);
-  checkCudaErrors(cudaMalloc(&oldAddress, numAmpsPerShard * sizeof(qreal)));
-  checkCudaErrors(cudaMemcpy(oldAddress, newAddress, numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
+  checkCudaErrors(cudaMalloc(&oldAddress, 2 * numAmpsPerShard * sizeof(qreal)));
+  checkCudaErrors(cudaMemcpy(oldAddress, newAddress, 2 * numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
   if (memopt::ConfigurationManager::getConfig().useNvlink) {
     checkCudaErrors(cudaFree(newAddress));
   } else {
@@ -168,8 +166,7 @@ qreal statevec_getImagAmp(Qureg qureg, StateVecIndex_t index) {
 void statevec_initZeroState(Qureg qureg) {
   // Set all amps to zero
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
-    checkCudaErrors(cudaMemset(qureg.deviceStateVecShards[i].real, 0, qureg.numAmpsPerShard * sizeof(qreal)));
-    checkCudaErrors(cudaMemset(qureg.deviceStateVecShards[i].imag, 0, qureg.numAmpsPerShard * sizeof(qreal)));
+    checkCudaErrors(cudaMemset(qureg.deviceStateVecShards[i].real, 0, 2 * qureg.numAmpsPerShard * sizeof(qreal)));
   }
 
   // Set |000...000>'s amp to 1
@@ -683,19 +680,14 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
       StateVecIndex_t globalIndex10 = flipBit(globalIndex00, qb2 - qureg.numLocalBits);
 
       memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
-        qreal *realTemp, *imagTemp;
-        checkCudaErrors(cudaMallocAsync(&realTemp, q.numAmpsPerShard * sizeof(qreal), s));
-        checkCudaErrors(cudaMallocAsync(&imagTemp, q.numAmpsPerShard * sizeof(qreal), s));
+        qreal* temp;
+        checkCudaErrors(cudaMallocAsync(&temp, 2 * q.numAmpsPerShard * sizeof(qreal), s));
 
-        checkCudaErrors(cudaMemcpyAsync(realTemp, q.deviceStateVecShards[globalIndex01].real, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-        checkCudaErrors(cudaMemcpyAsync(imagTemp, q.deviceStateVecShards[globalIndex01].imag, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex01].real, q.deviceStateVecShards[globalIndex10].real, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex01].imag, q.deviceStateVecShards[globalIndex10].imag, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex10].real, realTemp, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex10].imag, imagTemp, q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(temp, q.deviceStateVecShards[globalIndex01].real, 2 * q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex01].real, q.deviceStateVecShards[globalIndex10].real, 2 * q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
+        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex10].real, temp, 2 * q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
 
-        checkCudaErrors(cudaFreeAsync(realTemp, s));
-        checkCudaErrors(cudaFreeAsync(imagTemp, s));
+        checkCudaErrors(cudaFreeAsync(temp, s));
       };
       memopt_adapter::registerAndExecuteTask(
         {globalIndex01, globalIndex10},
@@ -838,15 +830,15 @@ void statevec_createQureg(Qureg* qureg, int numQubits, QuESTEnv env) {
   qureg->isDensityMatrix = 0;
 
   for (StateVecIndex_t i = 0; i < qureg->numShards; i++) {
-    memopt_adapter::allocateShardAndRegister(&(qureg->deviceStateVecShards[i].real), qureg->numAmpsPerShard * sizeof(qreal));
-    memopt_adapter::allocateShardAndRegister(&(qureg->deviceStateVecShards[i].imag), qureg->numAmpsPerShard * sizeof(qreal));
+    // The real parts and imaginary parts are packed into one array
+    memopt_adapter::allocateShardAndRegister(&(qureg->deviceStateVecShards[i].real), 2 * qureg->numAmpsPerShard * sizeof(qreal));
+    qureg->deviceStateVecShards[i].imag = qureg->deviceStateVecShards[i].real + qureg->numAmpsPerShard;
   }
 }
 
 void statevec_destroyQureg(Qureg qureg, QuESTEnv env) {
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
     checkCudaErrors(cudaFree(qureg.deviceStateVecShards[i].real));
-    checkCudaErrors(cudaFree(qureg.deviceStateVecShards[i].imag));
   }
 }
 
@@ -886,7 +878,7 @@ void applyFullQFTWithMemopt(Qureg* qureg) {
 
     for (StateVecIndex_t i = 0; i < qureg->numShards; i++) {
       memopt_adapter::moveDataBackToDevice(qureg->deviceStateVecShards[i].real, managedDeviceArrayToHostArrayMap, qureg->numAmpsPerShard);
-      memopt_adapter::moveDataBackToDevice(qureg->deviceStateVecShards[i].imag, managedDeviceArrayToHostArrayMap, qureg->numAmpsPerShard);
+      qureg->deviceStateVecShards[i].imag = qureg->deviceStateVecShards[i].real + qureg->numAmpsPerShard;
     }
     checkCudaErrors(cudaDeviceSynchronize());
   } else {
