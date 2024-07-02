@@ -84,7 +84,7 @@ void moveDataBackToDevice(T*& oldAddress, const std::map<void*, void*>& managedD
   auto newAddress = managedDeviceArrayToHostArrayMap.at(oldAddress);
   checkCudaErrors(cudaMalloc(&oldAddress, 2 * numAmpsPerShard * sizeof(qreal)));
   checkCudaErrors(cudaMemcpy(oldAddress, newAddress, 2 * numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault));
-  if (memopt::ConfigurationManager::getConfig().useNvlink) {
+  if (memopt::ConfigurationManager::getConfig().execution.useNvlink) {
     checkCudaErrors(cudaFree(newAddress));
   } else {
     free(newAddress);
@@ -791,7 +791,7 @@ QuESTEnv createQuESTEnv() {
   // Initialize memopt
   memopt::ConfigurationManager::exportDefaultConfiguration();
   memopt::ConfigurationManager::loadConfiguration();
-  checkCudaErrors(cudaSetDevice(memopt::Constants::DEVICE_ID));
+  memopt::initializeCudaDevice();
 
   validateGPUExists(GPUExists(), __func__);
 
@@ -858,7 +858,7 @@ void applyFullQFTWithMemopt(Qureg* qureg) {
 
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "graph.dot", cudaGraphDebugDotFlagsVerbose));
 
-  if (memopt::ConfigurationManager::getConfig().optimize) {
+  if (memopt::ConfigurationManager::getConfig().generic.optimize) {
     auto optimizedGraph = memopt::profileAndOptimize(graph);
 
     statevec_initZeroState(*qureg);
