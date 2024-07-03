@@ -43,8 +43,7 @@ typedef std::function<void(Qureg, cudaStream_t)> Task;
 std::vector<Task> tasks;
 
 void registerAndExecuteTask(
-  std::vector<StateVecIndex_t> inputShardIndices,
-  std::vector<StateVecIndex_t> outputShardIndices,
+  std::vector<StateVecIndex_t> ioShardIndices,
   Task task,
   Qureg qureg,
   cudaStream_t stream
@@ -53,10 +52,8 @@ void registerAndExecuteTask(
   tasks.push_back(task);
 
   std::vector<void*> inputs, outputs;
-  for (auto i : inputShardIndices) {
+  for (auto i : ioShardIndices) {
     inputs.push_back(qureg.deviceStateVecShards[i].real);
-  }
-  for (auto i : outputShardIndices) {
     outputs.push_back(qureg.deviceStateVecShards[i].real);
   }
 
@@ -252,7 +249,6 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
       };
       memopt_adapter::registerAndExecuteTask(
         {i},
-        {i},
         task,
         qureg,
         stream
@@ -274,7 +270,6 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
         );
       };
       memopt_adapter::registerAndExecuteTask(
-        {globalIndexUp, globalIndexLo},
         {globalIndexUp, globalIndexLo},
         task,
         qureg,
@@ -556,7 +551,6 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
     };
     memopt_adapter::registerAndExecuteTask(
       {i},
-      {i},
       task,
       qureg,
       stream
@@ -641,7 +635,6 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
       };
       memopt_adapter::registerAndExecuteTask(
         {i},
-        {i},
         task,
         qureg,
         stream
@@ -666,7 +659,6 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
       };
       memopt_adapter::registerAndExecuteTask(
         {globalIndexUp, globalIndexLo},
-        {globalIndexUp, globalIndexLo},
         task,
         qureg,
         stream
@@ -690,7 +682,6 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
         checkCudaErrors(cudaFreeAsync(temp, s));
       };
       memopt_adapter::registerAndExecuteTask(
-        {globalIndex01, globalIndex10},
         {globalIndex01, globalIndex10},
         task,
         qureg,
