@@ -277,6 +277,8 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
       );
     }
   }
+
+  memopt::endStage(stream);
 }
 
 __forceinline__ __device__ void setMultiRegPhaseInds(
@@ -556,6 +558,8 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
       stream
     );
   }
+
+  memopt::endStage(stream);
 }
 
 __global__ void statevec_swapQubitAmpsBothLocalKernel(Qureg qureg, StateVecIndex_t globalIndex, int qb1, int qb2) {
@@ -689,6 +693,8 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
       );
     }
   }
+
+  memopt::endStage(stream);
 }
 
 cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
@@ -740,7 +746,7 @@ cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
 extern "C" {
 #endif
 
-#define NUM_GLOBAL_BITS 3
+#define NUM_GLOBAL_BITS 4
 
 // Copied from QuEST_gpu_common.cu
 int GPUExists(void) {
@@ -873,10 +879,20 @@ void applyFullQFTWithMemopt(Qureg* qureg) {
     }
     checkCudaErrors(cudaDeviceSynchronize());
   } else {
+    memopt::PeakMemoryUsageProfiler profiler;
+    memopt::CudaEventClock clock;
+    profiler.start();
+
     cudaGraphExec_t graphExec;
     checkCudaErrors(cudaGraphInstantiate(&graphExec, graph));
+    clock.start(stream);
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    clock.end();
     checkCudaErrors(cudaStreamSynchronize(stream));
+
+    size_t peakMem = profiler.end();
+    printf("Peak memory usage (MiB): %.6f\n", (double)peakMem / 1024.0 / 1024.0);
+    printf("Total time used (s): %.6f\n", clock.getTimeInSeconds());
 
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
