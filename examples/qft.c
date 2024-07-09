@@ -33,11 +33,11 @@ int main(int argc, char **argv) {
 
   printf("Total time used (s): %.6lf\n", end - start);
 
-  printf("prob of solution |%llx> = %.8lf\n", 0, getProbAmp(qureg, 0));
+  printf("prob of solution |%llx> = %.8e\n", 0, getProbAmp(qureg, 0));
   long long index = 0;
   for (int i = 0; i < numQubits; i++) {
     index = index + (1 << i);
-    printf("prob of solution |%llx> = %.8lf\n", index, getProbAmp(qureg, index));
+    printf("prob of solution |%llx> = %.8e\n", index, getProbAmp(qureg, index));
   }
 
   destroyQureg(qureg, env);
