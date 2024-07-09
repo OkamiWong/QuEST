@@ -27,6 +27,8 @@ void __check(T result, char const* const func, const char* const file, int const
 
 typedef long long StateVecIndex_t;
 
+#define NUM_GLOBAL_BITS 4
+
 // Memopt wrappers
 namespace memopt_adapter {
 
@@ -745,8 +747,6 @@ cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define NUM_GLOBAL_BITS 4
 
 // Copied from QuEST_gpu_common.cu
 int GPUExists(void) {
