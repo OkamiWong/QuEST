@@ -213,6 +213,7 @@ if (GPUACCELERATED)
     set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
         -arch=compute_${GPU_COMPUTE_CAPABILITY} \
         -code=sm_${GPU_COMPUTE_CAPABILITY} \
+        --maxrregcount 40 \
         -std=c++17"
     )
     if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
