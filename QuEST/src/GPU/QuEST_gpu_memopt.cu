@@ -27,8 +27,6 @@ void __check(T result, char const* const func, const char* const file, int const
 
 typedef long long StateVecIndex_t;
 
-#define NUM_GLOBAL_BITS 4
-
 // Memopt wrappers
 namespace memopt_adapter {
 
@@ -174,7 +172,7 @@ void statevec_initZeroState(Qureg qureg) {
   checkCudaErrors(cudaMemcpy(&qureg.deviceStateVecShards[0].imag[0], &zero, sizeof(qreal), cudaMemcpyDefault));
 }
 
-__global__ void statevec_hadamardLocalBitKernel(Qureg qureg, StateVecIndex_t globalIndex, int targetQubit) {
+__global__ void statevec_hadamardLocalBitKernel(const __grid_constant__ Qureg qureg, StateVecIndex_t globalIndex, int targetQubit) {
   const StateVecIndex_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   const StateVecIndex_t numTasks = qureg.numAmpsPerShard >> 1;
   if (idx >= numTasks) return;
@@ -205,15 +203,15 @@ __global__ void statevec_hadamardLocalBitKernel(Qureg qureg, StateVecIndex_t glo
   *stateImagLo = factor * (stateImagUpValue - stateImagLoValue);
 }
 
-__global__ void statevec_hadamardGlobalBitKernel(Qureg qureg, StateVecIndex_t globalIndex, int targetQubit) {
+__global__ void statevec_hadamardGlobalBitKernel(const __grid_constant__ Qureg qureg, StateVecIndex_t globalIndex, int targetQubit) {
   const StateVecIndex_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= qureg.numAmpsPerShard) return;
 
   StateVecIndex_t globalIndexUp = globalIndex;
   StateVecIndex_t globalIndexLo = globalIndex | (1 << (targetQubit - qureg.numLocalBits));
 
-  ComplexArray* stateVecShardUp = &qureg.deviceStateVecShards[globalIndexUp];
-  ComplexArray* stateVecShardLo = &qureg.deviceStateVecShards[globalIndexLo];
+  ComplexArray* stateVecShardUp = (ComplexArray*)&qureg.deviceStateVecShards[globalIndexUp];
+  ComplexArray* stateVecShardLo = (ComplexArray*)&qureg.deviceStateVecShards[globalIndexLo];
 
   qreal *stateRealUp, *stateRealLo, *stateImagUp, *stateImagLo;
   stateRealUp = &stateVecShardUp->real[idx];
@@ -284,7 +282,7 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
 }
 
 __forceinline__ __device__ void setMultiRegPhaseInds(
-  Qureg* qureg,
+  const Qureg* qureg,
   StateVecIndex_t* phaseInds, StateVecIndex_t fullIndex,
   int* qubits, int* numQubitsPerReg, int numRegs, enum bitEncoding encoding
 ) {
@@ -313,7 +311,7 @@ __forceinline__ __device__ void setMultiRegPhaseInds(
 }
 
 __forceinline__ __device__ StateVecIndex_t getIndOfMultiRegPhaseOverride(
-  Qureg* qureg,
+  const Qureg* qureg,
   StateVecIndex_t fullIndex,
   StateVecIndex_t* phaseInds, int numRegs,
   StateVecIndex_t* overrideInds, int numOverrides
@@ -438,7 +436,7 @@ __forceinline__ __device__ qreal evalDistancePhaseFunc(
 }
 
 __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
-  Qureg* qureg,
+  const Qureg* qureg,
   StateVecIndex_t fullIndex,
   StateVecIndex_t* phaseInds, int numRegs,
   enum phaseFunc phaseFuncName, qreal* params, int numParams
@@ -475,7 +473,7 @@ __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
 }
 
 __forceinline__ __device__ void applyPhaseToAmp(
-  Qureg* qureg,
+  const Qureg* qureg,
   StateVecIndex_t globalIndex, StateVecIndex_t localIndex,
   qreal phase, int conj
 ) {
@@ -505,7 +503,7 @@ struct ApplyParamNamedPhaseFuncOverridesParams {
 };
 
 __global__ void statevec_applyParamNamedPhaseFuncOverridesKernel(
-  Qureg qureg,
+  const __grid_constant__ Qureg qureg,
   ApplyParamNamedPhaseFuncOverridesParams params,
   StateVecIndex_t* phaseInds,
   StateVecIndex_t globalIndex
@@ -564,7 +562,7 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
   memopt::endStage(stream);
 }
 
-__global__ void statevec_swapQubitAmpsBothLocalKernel(Qureg qureg, StateVecIndex_t globalIndex, int qb1, int qb2) {
+__global__ void statevec_swapQubitAmpsBothLocalKernel(const __grid_constant__ Qureg qureg, StateVecIndex_t globalIndex, int qb1, int qb2) {
   const StateVecIndex_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   const StateVecIndex_t numTasks = qureg.numAmpsPerShard >> 2;
   if (idx >= numTasks) return;
@@ -590,7 +588,7 @@ __global__ void statevec_swapQubitAmpsBothLocalKernel(Qureg qureg, StateVecIndex
   imVec[ind10] = im01;
 }
 
-__global__ void statevec_swapQubitAmpsOneLocalOneGlobalKernel(Qureg qureg, StateVecIndex_t globalIndex, int qb1, int qb2) {
+__global__ void statevec_swapQubitAmpsOneLocalOneGlobalKernel(const __grid_constant__ Qureg qureg, StateVecIndex_t globalIndex, int qb1, int qb2) {
   const StateVecIndex_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   const StateVecIndex_t numTasks = qureg.numAmpsPerShard >> 1;
   if (idx >= numTasks) return;
@@ -808,7 +806,6 @@ void destroyQuESTEnv(QuESTEnv env) {
 }
 
 void statevec_createQureg(Qureg* qureg, int numQubits, QuESTEnv env) {
-  assert((1 << NUM_GLOBAL_BITS) <= MAX_NUM_SHARDS);
   assert(numQubits > NUM_GLOBAL_BITS);
 
   const StateVecIndex_t numShards = 1L << NUM_GLOBAL_BITS;

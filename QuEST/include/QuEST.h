@@ -350,7 +350,8 @@ typedef struct SubDiagonalOp
     
 } SubDiagonalOp;
 
-#define MAX_NUM_SHARDS 64
+#define NUM_GLOBAL_BITS 4
+#define NUM_SHARDS (1 << NUM_GLOBAL_BITS)
 
 /** Represents a system of qubits.
  * Qubits are zero-based
@@ -401,7 +402,7 @@ typedef struct Qureg
     CuQuantumConfig* cuConfig;
 
     //! Storage for wavefunction amplitues in the GPU version with memopt
-    ComplexArray deviceStateVecShards[MAX_NUM_SHARDS];
+    ComplexArray deviceStateVecShards[NUM_SHARDS];
 
     //! Storage for generated QASM output
     QASMLogger* qasmLog;
