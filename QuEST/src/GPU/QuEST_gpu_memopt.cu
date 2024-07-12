@@ -284,7 +284,7 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
 __forceinline__ __device__ void setMultiRegPhaseInds(
   const Qureg* qureg,
   StateVecIndex_t* phaseInds, StateVecIndex_t fullIndex,
-  int* qubits, int* numQubitsPerReg, int numRegs, enum bitEncoding encoding
+  const int* qubits, const int* numQubitsPerReg, int numRegs, enum bitEncoding encoding
 ) {
   size_t stride = qureg->numAmpsPerShard;
   size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
@@ -314,7 +314,7 @@ __forceinline__ __device__ StateVecIndex_t getIndOfMultiRegPhaseOverride(
   const Qureg* qureg,
   StateVecIndex_t fullIndex,
   StateVecIndex_t* phaseInds, int numRegs,
-  StateVecIndex_t* overrideInds, int numOverrides
+  const StateVecIndex_t* overrideInds, int numOverrides
 ) {
   size_t stride = qureg->numAmpsPerShard;
   size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
@@ -338,7 +338,7 @@ __forceinline__ __device__ StateVecIndex_t getIndOfMultiRegPhaseOverride(
 
 __forceinline__ __device__ qreal evalNormPhaseFunc(
   StateVecIndex_t* phaseInds, size_t stride, size_t offset,
-  int numRegs, enum phaseFunc phaseFuncName, qreal* params, int numParams
+  int numRegs, enum phaseFunc phaseFuncName, const qreal* params, int numParams
 ) {
   // determine norm
   qreal norm = 0;
@@ -371,7 +371,7 @@ __forceinline__ __device__ qreal evalNormPhaseFunc(
 
 __forceinline__ __device__ qreal evalProductPhaseFunc(
   StateVecIndex_t* phaseInds, size_t stride, size_t offset,
-  int numRegs, enum phaseFunc phaseFuncName, qreal* params, int numParams
+  int numRegs, enum phaseFunc phaseFuncName, const qreal* params, int numParams
 ) {
   // determine product of phase indices
   qreal prod = 1;
@@ -394,7 +394,7 @@ __forceinline__ __device__ qreal evalProductPhaseFunc(
 
 __forceinline__ __device__ qreal evalDistancePhaseFunc(
   StateVecIndex_t* phaseInds, size_t stride, size_t offset,
-  int numRegs, enum phaseFunc phaseFuncName, qreal* params, int numParams
+  int numRegs, enum phaseFunc phaseFuncName, const qreal* params, int numParams
 ) {
   // evaluate distance (depends on phase function)
   qreal dist = 0;
@@ -439,7 +439,7 @@ __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
   const Qureg* qureg,
   StateVecIndex_t fullIndex,
   StateVecIndex_t* phaseInds, int numRegs,
-  enum phaseFunc phaseFuncName, qreal* params, int numParams
+  enum phaseFunc phaseFuncName, const qreal* params, int numParams
 ) {
   size_t stride = qureg->numAmpsPerShard;
   size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
@@ -504,7 +504,7 @@ struct ApplyParamNamedPhaseFuncOverridesParams {
 
 __global__ void statevec_applyParamNamedPhaseFuncOverridesKernel(
   const __grid_constant__ Qureg qureg,
-  ApplyParamNamedPhaseFuncOverridesParams params,
+  const __grid_constant__ ApplyParamNamedPhaseFuncOverridesParams params,
   StateVecIndex_t* phaseInds,
   StateVecIndex_t globalIndex
 ) {
