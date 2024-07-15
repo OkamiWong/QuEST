@@ -10,7 +10,7 @@ config:
 	-DCMAKE_PREFIX_PATH=${ORTOOLS_ROOT} \
 
 .PHONY: config-debug
-config:
+config-debug:
 	cmake -S . -B ./build -DMULTITHREADED=0 \
 	-DGPUACCELERATED=1 -DGPU_COMPUTE_CAPABILITY=80 \
 	-DUSE_CUQUANTUM=0 -DUSE_MEMOPT=1 \
