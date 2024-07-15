@@ -306,8 +306,8 @@ __forceinline__ __device__ void setMultiRegPhaseInds(
   StateVecIndex_t* phaseInds, StateVecIndex_t fullIndex,
   const int* qubits, const int* numQubitsPerReg, int numRegs, enum bitEncoding encoding
 ) {
-  size_t stride = qureg->numAmpsPerShard;
-  size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
+  size_t stride = blockDim.x;
+  size_t offset = threadIdx.x;
 
   if (encoding == UNSIGNED) {
     int flatIndex = 0;
@@ -317,16 +317,8 @@ __forceinline__ __device__ void setMultiRegPhaseInds(
         phaseInds[r * stride + offset] += (1LL << q) * getBit(fullIndex, qubits[flatIndex++]);
     }
   } else if (encoding == TWOS_COMPLEMENT) {
-    int flatIndex = 0;
-    for (int r = 0; r < numRegs; r++) {
-      phaseInds[r * stride + offset] = 0LL;
-      for (int q = 0; q < numQubitsPerReg[r] - 1; q++)
-        phaseInds[r * stride + offset] += (1LL << q) * getBit(fullIndex, qubits[flatIndex++]);
-
-      // Use final qubit to indicate sign
-      if (getBit(fullIndex, qubits[flatIndex++]) == 1)
-        phaseInds[r * stride + offset] -= (1LL << (numQubitsPerReg[r] - 1));
-    }
+    // Not implemented
+    __trap();
   }
 }
 
@@ -336,8 +328,8 @@ __forceinline__ __device__ StateVecIndex_t getIndOfMultiRegPhaseOverride(
   StateVecIndex_t* phaseInds, int numRegs,
   const StateVecIndex_t* overrideInds, int numOverrides
 ) {
-  size_t stride = qureg->numAmpsPerShard;
-  size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
+  size_t stride = blockDim.x;
+  size_t offset = threadIdx.x;
 
   int i;
   for (i = 0; i < numOverrides; i++) {
@@ -360,33 +352,8 @@ __forceinline__ __device__ qreal evalNormPhaseFunc(
   StateVecIndex_t* phaseInds, size_t stride, size_t offset,
   int numRegs, enum phaseFunc phaseFuncName, const qreal* params, int numParams
 ) {
-  // determine norm
-  qreal norm = 0;
-  if (phaseFuncName == SCALED_INVERSE_SHIFTED_NORM) {
-    for (int r = 0; r < numRegs; r++) {
-      qreal dif = phaseInds[r * stride + offset] - params[2 + r];
-      norm += dif * dif;
-    }
-  } else
-    for (int r = 0; r < numRegs; r++)
-      norm += phaseInds[r * stride + offset] * phaseInds[r * stride + offset];
-  norm = sqrt(norm);
-
-  // determine phase via phase function
-
-  if (phaseFuncName == NORM)
-    return norm;
-
-  if (phaseFuncName == INVERSE_NORM)
-    return (norm == 0.) ? params[0] : 1 / norm;  // smallest non-zero norm is 1
-
-  if (phaseFuncName == SCALED_NORM)
-    return params[0] * norm;
-
-  if (
-    phaseFuncName == SCALED_INVERSE_NORM || phaseFuncName == SCALED_INVERSE_SHIFTED_NORM
-  )
-    return (norm <= REAL_EPS) ? params[1] : params[0] / norm;  // unless shifted closer to zero
+  // Not implemented
+  __trap();
 }
 
 __forceinline__ __device__ qreal evalProductPhaseFunc(
@@ -416,43 +383,8 @@ __forceinline__ __device__ qreal evalDistancePhaseFunc(
   StateVecIndex_t* phaseInds, size_t stride, size_t offset,
   int numRegs, enum phaseFunc phaseFuncName, const qreal* params, int numParams
 ) {
-  // evaluate distance (depends on phase function)
-  qreal dist = 0;
-  if (phaseFuncName == SCALED_INVERSE_SHIFTED_DISTANCE) {
-    for (int r = 0; r < numRegs; r += 2) {
-      qreal dif = (phaseInds[r * stride + offset] - phaseInds[(r + 1) * stride + offset] - params[2 + r / 2]);
-      dist += dif * dif;
-    }
-  } else if (phaseFuncName == SCALED_INVERSE_SHIFTED_WEIGHTED_DISTANCE) {
-    for (int r = 0; r < numRegs; r += 2) {
-      qreal dif = (phaseInds[r * stride + offset] - phaseInds[(r + 1) * stride + offset] - params[2 + r + 1]);
-      dist += params[2 + r] * dif * dif;
-    }
-  } else
-    for (int r = 0; r < numRegs; r += 2) {
-      qreal dif = (phaseInds[(r + 1) * stride + offset] - phaseInds[r * stride + offset]);
-      dist += dif * dif;
-    }
-
-  // if sqrt() arg of distance would be negative, set it to zero, to subsequently be set to the divergence param
-  if (dist < 0)
-    dist = 0;
-
-  dist = sqrt(dist);
-
-  if (phaseFuncName == DISTANCE)
-    return dist;
-
-  if (phaseFuncName == INVERSE_DISTANCE)
-    return (dist == 0.) ? params[0] : 1 / dist;  // smallest non-zero dist is 1
-
-  if (phaseFuncName == SCALED_DISTANCE)
-    return params[0] * dist;
-
-  if (
-    phaseFuncName == SCALED_INVERSE_DISTANCE || phaseFuncName == SCALED_INVERSE_SHIFTED_DISTANCE || phaseFuncName == SCALED_INVERSE_SHIFTED_WEIGHTED_DISTANCE
-  )
-    return (dist <= REAL_EPS) ? params[1] : params[0] / dist;  // unless shifted closer
+  // Not implemented
+  __trap();
 }
 
 __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
@@ -461,8 +393,8 @@ __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
   StateVecIndex_t* phaseInds, int numRegs,
   enum phaseFunc phaseFuncName, const qreal* params, int numParams
 ) {
-  size_t stride = qureg->numAmpsPerShard;
-  size_t offset = fullIndex & ((1 << qureg->numLocalBits) - 1);
+  size_t stride = blockDim.x;
+  size_t offset = threadIdx.x;
 
   if (
     phaseFuncName == NORM
@@ -527,9 +459,10 @@ statevec_applyParamNamedPhaseFuncOverridesKernel(
   const __grid_constant__ KernelParamQureg qureg,
   const __grid_constant__ ApplyParamNamedPhaseFuncOverridesParams params,
   const __grid_constant__ ComplexArray stateVecShard,
-  StateVecIndex_t* phaseInds,
   StateVecIndex_t globalIndex
 ) {
+  extern __shared__ StateVecIndex_t phaseInds[];
+
   const StateVecIndex_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= qureg.numAmpsPerShard) return;
 
@@ -563,16 +496,12 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
 
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
     memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
-      StateVecIndex_t* d_phaseInds;
-      checkCudaErrors(cudaMallocAsync(&d_phaseInds, params.numRegs * q.numAmpsPerShard * sizeof *d_phaseInds, s));
-      statevec_applyParamNamedPhaseFuncOverridesKernel<<<numBlocks, numThreadsPerBlock, 0, s>>>(
+      statevec_applyParamNamedPhaseFuncOverridesKernel<<<numBlocks, numThreadsPerBlock, numThreadsPerBlock * params.numRegs * sizeof(StateVecIndex_t), s>>>(
         convertToKernelParamQureg(q),
         params,
         q.deviceStateVecShards[i],
-        d_phaseInds,
         i
       );
-      checkCudaErrors(cudaFreeAsync(d_phaseInds, s));
     };
     memopt_adapter::registerAndExecuteTask(
       {i},
