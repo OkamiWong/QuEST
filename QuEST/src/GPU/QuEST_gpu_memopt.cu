@@ -493,9 +493,7 @@ __forceinline__ __device__ qreal getPhaseFromParamNamedFunc(
 }
 
 __forceinline__ __device__ void applyPhaseToAmp(
-  const KernelParamQureg* qureg,
   const ComplexArray* stateVecShard,
-  StateVecIndex_t globalIndex,
   StateVecIndex_t localIndex,
   qreal phase, int conj
 ) {
@@ -551,7 +549,7 @@ statevec_applyParamNamedPhaseFuncOverridesKernel(
     phase = getPhaseFromParamNamedFunc(&qureg, fullIndex, phaseInds, params.numRegs, params.phaseFuncName, params.params, params.numParams);
 
   // Modify amp to amp * exp(i phase)
-  applyPhaseToAmp(&qureg, &stateVecShard, globalIndex, idx, phase, params.conj);
+  applyPhaseToAmp(&stateVecShard, idx, phase, params.conj);
 }
 
 void memopt_statevec_applyParamNamedPhaseFuncOverrides(
