@@ -570,6 +570,28 @@ __global__ void statevec_swapQubitAmpsOneLocalOneGlobalKernel(
   stateVecShardLo.imag[localIndexUp] = im01;
 }
 
+__global__ void statevec_swapQubitAmpsBothGlobalKernel(
+  const __grid_constant__ KernelParamQureg qureg,
+  const __grid_constant__ ComplexArray stateVecShard01,
+  const __grid_constant__ ComplexArray stateVecShard10
+) {
+  const StateVecIndex_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const StateVecIndex_t numTasks = qureg.numAmpsPerShard;
+  if (idx >= numTasks) return;
+
+  qreal re01, re10, im01, im10;
+
+  re01 = stateVecShard01.real[idx];
+  im01 = stateVecShard01.imag[idx];
+  re10 = stateVecShard10.real[idx];
+  im10 = stateVecShard10.imag[idx];
+
+  stateVecShard01.real[idx] = re10;
+  stateVecShard01.imag[idx] = im10;
+  stateVecShard10.real[idx] = re01;
+  stateVecShard10.imag[idx] = im01;
+}
+
 void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, int qb2) {
   // Make sure qb1 < qb2
   if (qb2 < qb1) {
@@ -627,20 +649,22 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
     }
   } else {
     // Both are global bits
+    // qb1 is local bit while qb2 is global bit
+    StateVecIndex_t numThreadsPerBlock, numBlocks;
+    numThreadsPerBlock = 128;
+    numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
+
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 2); i++) {
       StateVecIndex_t globalIndex00 = insertTwoZeroBits(i, qb1 - qureg.numLocalBits, qb2 - qureg.numLocalBits);
       StateVecIndex_t globalIndex01 = flipBit(globalIndex00, qb1 - qureg.numLocalBits);
       StateVecIndex_t globalIndex10 = flipBit(globalIndex00, qb2 - qureg.numLocalBits);
 
       memopt_adapter::Task task = [=](Qureg q, cudaStream_t s) {
-        qreal* temp;
-        checkCudaErrors(cudaMallocAsync(&temp, 2 * q.numAmpsPerShard * sizeof(qreal), s));
-
-        checkCudaErrors(cudaMemcpyAsync(temp, q.deviceStateVecShards[globalIndex01].real, 2 * q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex01].real, q.deviceStateVecShards[globalIndex10].real, 2 * q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-        checkCudaErrors(cudaMemcpyAsync(q.deviceStateVecShards[globalIndex10].real, temp, 2 * q.numAmpsPerShard * sizeof(qreal), cudaMemcpyDefault, s));
-
-        checkCudaErrors(cudaFreeAsync(temp, s));
+        statevec_swapQubitAmpsBothGlobalKernel<<<numBlocks, numThreadsPerBlock, 0, s>>>(
+          convertToKernelParamQureg(q),
+          q.deviceStateVecShards[globalIndex01],
+          q.deviceStateVecShards[globalIndex10]
+        );
       };
       memopt_adapter::registerAndExecuteTask(
         {globalIndex01, globalIndex10},
