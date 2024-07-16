@@ -84,7 +84,7 @@ void moveDataBackToDevice(T*& oldAddress, const std::map<void*, void*>& managedD
   if (memopt::ConfigurationManager::getConfig().execution.useNvlink) {
     checkCudaErrors(cudaFree(newAddress));
   } else {
-    free(newAddress);
+    checkCudaErrors(cudaFreeHost(newAddress));
   }
 }
 
