@@ -32,7 +32,11 @@ namespace memopt_adapter {
 
 template <typename T>
 void allocateShardAndRegister(T** p, size_t s) {
-  checkCudaErrors(cudaMalloc(p, s));
+  if (memopt::ConfigurationManager::getConfig().generic.useUM) {
+    checkCudaErrors(cudaMallocManaged(p, s));
+  } else {
+    checkCudaErrors(cudaMalloc(p, s));
+  }
   memopt::registerManagedMemoryAddress(*p, s);
   memopt::registerApplicationInput(*p);
   memopt::registerApplicationOutput(*p);
@@ -857,6 +861,11 @@ void applyFullQFTWithMemopt(Qureg* qureg) {
     }
     checkCudaErrors(cudaDeviceSynchronize());
   } else {
+    if (memopt::ConfigurationManager::getConfig().generic.useUM) {
+      size_t available = 1024ULL * 1024ULL * memopt::ConfigurationManager::getConfig().generic.availableMemoryForUMInMiB;
+      memopt::reduceAvailableMemoryForUM(available);
+    }
+
     memopt::PeakMemoryUsageProfiler profiler;
     memopt::CudaEventClock clock;
     profiler.start();
@@ -871,6 +880,10 @@ void applyFullQFTWithMemopt(Qureg* qureg) {
     size_t peakMem = profiler.end();
     printf("Peak memory usage (MiB): %.6f\n", (double)peakMem / 1024.0 / 1024.0);
     printf("Total time used (s): %.6f\n", clock.getTimeInSeconds());
+
+    if (memopt::ConfigurationManager::getConfig().generic.useUM) {
+      memopt::resetAvailableMemoryForUM();
+    }
 
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
