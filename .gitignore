@@ -13,6 +13,7 @@ currentConfig.json
 defaultConfig.json
 
 # Debug
+*Plan*.json
 *.dot
 *.out
 secondStepSolverOutputs/
