@@ -17,3 +17,5 @@ defaultConfig.json
 *.dot
 *.out
 secondStepSolverOutputs/
+*.nsys-rep
+*.ncu-rep
