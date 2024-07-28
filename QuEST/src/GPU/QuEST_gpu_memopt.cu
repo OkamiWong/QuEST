@@ -97,6 +97,7 @@ void moveDataBackToDevice(T*& oldAddress, const std::map<void*, void*>& managedD
 // QuEST speicifc definitions
 constexpr int MAX_NUM_QUBITS = 64;
 constexpr int MAX_NUM_PHASE_FUNC_OVERRIDES = 8;
+constexpr int NUM_THREADS_PER_BLOCK = 128;
 
 struct KernelParamQureg {
   long long numAmpsPerShard;
@@ -259,7 +260,7 @@ __global__ void statevec_hadamardGlobalBitKernel(
 void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit) {
   if (targetQubit < qureg.numLocalBits) {
     StateVecIndex_t numThreadsPerBlock, numBlocks;
-    numThreadsPerBlock = 128;
+    numThreadsPerBlock = NUM_THREADS_PER_BLOCK;
     numBlocks = ((qureg.numAmpsPerShard >> 1) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
@@ -279,7 +280,7 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
     }
   } else {
     StateVecIndex_t numThreadsPerBlock, numBlocks;
-    numThreadsPerBlock = 128;
+    numThreadsPerBlock = NUM_THREADS_PER_BLOCK;
     numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 1); i++) {
@@ -495,7 +496,7 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
   ApplyParamNamedPhaseFuncOverridesParams params
 ) {
   StateVecIndex_t numThreadsPerBlock, numBlocks;
-  numThreadsPerBlock = 128;
+  numThreadsPerBlock = NUM_THREADS_PER_BLOCK;
   numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
   for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
@@ -607,7 +608,7 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
   if (qb2 < qureg.numLocalBits) {
     // Both are local bits
     StateVecIndex_t numThreadsPerBlock, numBlocks;
-    numThreadsPerBlock = 128;
+    numThreadsPerBlock = NUM_THREADS_PER_BLOCK;
     numBlocks = ((qureg.numAmpsPerShard >> 2) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < qureg.numShards; i++) {
@@ -629,7 +630,7 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
   } else if (qb1 < qureg.numLocalBits) {
     // qb1 is local bit while qb2 is global bit
     StateVecIndex_t numThreadsPerBlock, numBlocks;
-    numThreadsPerBlock = 128;
+    numThreadsPerBlock = NUM_THREADS_PER_BLOCK;
     numBlocks = ((qureg.numAmpsPerShard >> 1) + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 1); i++) {
@@ -655,7 +656,7 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
     // Both are global bits
     // qb1 is local bit while qb2 is global bit
     StateVecIndex_t numThreadsPerBlock, numBlocks;
-    numThreadsPerBlock = 128;
+    numThreadsPerBlock = NUM_THREADS_PER_BLOCK;
     numBlocks = (qureg.numAmpsPerShard + numThreadsPerBlock - 1) / numThreadsPerBlock;
 
     for (StateVecIndex_t i = 0; i < (qureg.numShards >> 2); i++) {
