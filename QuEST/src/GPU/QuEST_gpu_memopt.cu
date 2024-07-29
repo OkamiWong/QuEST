@@ -302,8 +302,6 @@ void memopt_statevec_hadamard(cudaStream_t stream, Qureg qureg, int targetQubit)
       );
     }
   }
-
-  memopt::endStage(stream);
 }
 
 __forceinline__ __device__ void setMultiRegPhaseInds(
@@ -515,8 +513,6 @@ void memopt_statevec_applyParamNamedPhaseFuncOverrides(
       stream
     );
   }
-
-  memopt::endStage(stream);
 }
 
 __global__ void statevec_swapQubitAmpsBothLocalKernel(
@@ -679,8 +675,6 @@ void memopt_statevec_swapQubitAmps(cudaStream_t stream, Qureg qureg, int qb1, in
       );
     }
   }
-
-  memopt::endStage(stream);
 }
 
 cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
@@ -714,6 +708,8 @@ cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
     params.conj = 0;
 
     memopt_statevec_applyParamNamedPhaseFuncOverrides(stream, qureg, params);
+
+    memopt::endStage(stream);
   }
 
   for (int i = 0; i < (qureg.numQubitsInStateVec / 2); i++) {
@@ -721,6 +717,10 @@ cudaGraph_t captureCudaGraphForFullQFT(cudaStream_t stream, Qureg qureg) {
     int qb2 = qureg.numQubitsInStateVec - i - 1;
 
     memopt_statevec_swapQubitAmps(stream, qureg, qb1, qb2);
+
+    if ((i + 1) % 2 == 0 || (i + 1) == qureg.numQubitsInStateVec / 2) {
+      memopt::endStage(stream);
+    }
   }
 
   cudaGraph_t graph;
